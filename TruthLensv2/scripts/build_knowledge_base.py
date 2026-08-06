@@ -4,8 +4,8 @@ TruthLens V2
 
 Build Knowledge Base
 
-Creates the complete Topic Knowledge Base from
-the collected news dataset.
+Creates the complete Topic Knowledge Base
+from the downloaded news dataset.
 
 Pipeline
 
@@ -15,13 +15,16 @@ news_dataset.json
 Load Dataset
         │
         ▼
-Group Articles by Topic
+Group Articles
+        │
+        ▼
+Create Document Objects
         │
         ▼
 Knowledge Creation Engine
         │
         ▼
-Topic Validation
+Validate Topics
         │
         ▼
 Knowledge Manager
@@ -35,8 +38,11 @@ Siddharth Metkari
 """
 
 import json
+
 from pathlib import Path
+
 from collections import defaultdict
+
 from typing import Dict, List
 
 from document_processing.document_processor import (
@@ -60,39 +66,33 @@ from knowledge_base.topic_validator import (
 # Project Paths
 # =========================================================
 
-PROJECT_ROOT = (
+PROJECT_ROOT = Path(
 
-    Path(__file__)
+    __file__
 
-    .resolve()
-
-    .parent
-
-    .parent
-
-)
+).resolve().parent.parent
 
 DATA_FOLDER = (
 
-    PROJECT_ROOT
+    PROJECT_ROOT /
 
-    / "data"
+    "data"
 
 )
 
 INPUT_DATASET = (
 
-    DATA_FOLDER
+    DATA_FOLDER /
 
-    / "news_dataset.json"
+    "news_dataset.json"
 
 )
 
 OUTPUT_KB = (
 
-    DATA_FOLDER
+    DATA_FOLDER /
 
-    / "knowledge_base.json"
+    "knowledge_base.json"
 
 )
 
@@ -104,55 +104,56 @@ OUTPUT_KB = (
 class BuildKnowledgeBase:
 
     """
-    Builds the complete Knowledge Base
-    from the downloaded news dataset.
+    Creates the complete Topic
+    Knowledge Base.
     """
-def __init__(self):
 
-    self.dataset = []
+    def __init__(self):
 
-    self.grouped_articles = {}
+        self.dataset = []
 
-    self.created_topics = []
+        self.grouped_articles = {}
 
-    # Create Knowledge Manager first
-    self.manager = KnowledgeManager(
+        self.created_topics = []
 
-        str(
+        self.manager = KnowledgeManager(
 
-            OUTPUT_KB
+            str(
+
+                OUTPUT_KB
+
+            )
 
         )
 
-    )
+        self.engine = KnowledgeCreationEngine(
 
-    # Pass it into the Engine
-    self.engine = KnowledgeCreationEngine(
+            self.manager
 
-        self.manager
+        )
 
-    )
+        self.validator = TopicValidator()
 
-    self.validator = TopicValidator()
+        print(
 
-    print(
+            "\nKnowledge Base Builder Initialized."
 
-        "Knowledge Base Builder Initialized."
+        )
 
-    )
 
     # =====================================================
     # Load Dataset
     # =====================================================
 
-def load_dataset(
+    def load_dataset(
 
         self
 
     ) -> List[Dict]:
 
         """
-        Loads the normalized news dataset.
+        Loads the normalized
+        news dataset.
         """
 
         if not INPUT_DATASET.exists():
@@ -186,11 +187,12 @@ def load_dataset(
         )
 
         return self.dataset
-        # =====================================================
+
+    # =====================================================
     # Group Articles By Topic
     # =====================================================
 
-def group_articles(
+    def group_articles(
 
         self
 
@@ -246,7 +248,7 @@ def group_articles(
     # Print Group Statistics
     # =====================================================
 
-def print_group_statistics(
+    def print_group_statistics(
 
         self
 
@@ -311,11 +313,12 @@ def print_group_statistics(
 
         )
 
-        # =====================================================
+
+    # =====================================================
     # Convert Articles To Document Objects
     # =====================================================
 
-def create_documents(
+    def create_documents(
 
         self,
 
@@ -324,9 +327,8 @@ def create_documents(
     ) -> List[Document]:
 
         """
-        Converts normalized news articles into
-        Document objects expected by the
-        Knowledge Creation Engine.
+        Converts normalized articles into
+        Document objects.
         """
 
         documents = []
@@ -338,6 +340,14 @@ def create_documents(
                 title=article.get(
 
                     "title",
+
+                    ""
+
+                ),
+
+                content=article.get(
+
+                    "content",
 
                     ""
 
@@ -365,14 +375,6 @@ def create_documents(
 
                     ""
 
-                ),
-
-                content=article.get(
-
-                    "content",
-
-                    ""
-
                 )
 
             )
@@ -387,18 +389,18 @@ def create_documents(
 
 
     # =====================================================
-    # Convert All Topic Groups
+    # Prepare Documents
     # =====================================================
 
-def prepare_documents(
+    def prepare_documents(
 
         self
 
     ) -> Dict[str, List[Document]]:
 
         """
-        Converts every grouped topic into
-        a list of Document objects.
+        Converts every topic group
+        into Document objects.
         """
 
         prepared_documents = {}
@@ -423,11 +425,11 @@ def prepare_documents(
 
         return prepared_documents
 
-        # =====================================================
+    # =====================================================
     # Generate Topics
     # =====================================================
 
-def generate_topics(
+    def generate_topics(
 
         self,
 
@@ -436,9 +438,8 @@ def generate_topics(
     ):
 
         """
-        Generates one Topic object for every
-        grouped topic using the
-        Knowledge Creation Engine.
+        Creates one Topic object
+        for every grouped topic.
         """
 
         self.created_topics = []
@@ -487,7 +488,7 @@ def generate_topics(
 
                     print(
 
-                        "Topic Created Successfully."
+                        "✓ Topic Created"
 
                     )
 
@@ -495,7 +496,7 @@ def generate_topics(
 
                     print(
 
-                        "Topic Creation Failed."
+                        "✗ Topic Creation Failed"
 
                     )
 
@@ -503,9 +504,7 @@ def generate_topics(
 
                 print(
 
-                    f"Error while creating topic "
-
-                    f"'{topic_name}'"
+                    f"Error creating '{topic_name}'"
 
                 )
 
@@ -523,31 +522,31 @@ def generate_topics(
 
         print(
 
-            f"Generated {len(self.created_topics)} Topics."
+            f"Generated Topics : {len(self.created_topics)}"
 
         )
 
         print(
 
-            "====================================\n"
+            "===================================="
 
         )
 
         return self.created_topics
 
-        # =====================================================
+
+    # =====================================================
     # Validate Topics
     # =====================================================
 
-def validate_topics(
+    def validate_topics(
 
         self
 
     ):
 
         """
-        Validates every generated Topic using
-        the Topic Validator.
+        Validates every generated Topic.
         """
 
         valid_topics = []
@@ -572,12 +571,6 @@ def validate_topics(
 
         for topic in self.created_topics:
 
-            print(
-
-                f"\nValidating : {topic.topic_name}"
-
-            )
-
             report = self.validator.validate(
 
                 topic
@@ -598,17 +591,11 @@ def validate_topics(
 
                 )
 
-                print(
-
-                    "Topic Accepted."
-
-                )
-
             else:
 
                 print(
 
-                    "Topic Rejected."
+                    f"Rejected : {topic.topic_name}"
 
                 )
 
@@ -616,38 +603,26 @@ def validate_topics(
 
         print(
 
-            "\n===================================="
+            f"\nValid Topics : {len(valid_topics)}"
 
         )
 
-        print(
+        return valid_topics
 
-            f"Valid Topics : {len(self.created_topics)}"
 
-        )
-
-        print(
-
-            "====================================\n"
-
-        )
-
-        return self.created_topics
-
-        # =====================================================
+    # =====================================================
     # Save Knowledge Base
     # =====================================================
 
-def save_knowledge_base(
+    def save_knowledge_base(
 
         self
 
     ):
 
         """
-        Saves all validated Topics into
-        knowledge_base.json using the
-        Knowledge Manager.
+        Saves Topics into
+        knowledge_base.json.
         """
 
         print(
@@ -668,19 +643,19 @@ def save_knowledge_base(
 
         )
 
-        added_topics = 0
+        added = 0
 
-        updated_topics = 0
+        updated = 0
 
         for topic in self.created_topics:
 
-            existing_topic = self.manager.find_by_name(
+            existing = self.manager.find_by_name(
 
                 topic.topic_name
 
             )
 
-            if existing_topic is None:
+            if existing is None:
 
                 self.manager.add_topic(
 
@@ -688,7 +663,7 @@ def save_knowledge_base(
 
                 )
 
-                added_topics += 1
+                added += 1
 
                 print(
 
@@ -698,11 +673,7 @@ def save_knowledge_base(
 
             else:
 
-                topic.topic_id = (
-
-                    existing_topic.topic_id
-
-                )
+                topic.topic_id = existing.topic_id
 
                 self.manager.update_topic(
 
@@ -710,7 +681,7 @@ def save_knowledge_base(
 
                 )
 
-                updated_topics += 1
+                updated += 1
 
                 print(
 
@@ -726,42 +697,43 @@ def save_knowledge_base(
 
         print(
 
-            f"New Topics      : {added_topics}"
+            f"Added Topics   : {added}"
 
         )
 
         print(
 
-            f"Updated Topics  : {updated_topics}"
+            f"Updated Topics : {updated}"
 
         )
 
         print(
 
-            f"Total Topics    : {self.manager.topic_count()}"
+            f"Total Topics   : {self.manager.topic_count()}"
 
         )
 
         print(
 
-            "====================================\n"
+            "===================================="
 
         )
 
         return self.manager.get_all_topics()
 
-        # =====================================================
+    # =====================================================
     # Build Complete Knowledge Base
     # =====================================================
 
-def build(
+    def build(
 
         self
 
     ):
 
         """
-        Complete Knowledge Base Creation Pipeline.
+        Executes the complete Knowledge
+        Base creation pipeline.
         """
 
         print(
@@ -797,7 +769,7 @@ def build(
         self.print_group_statistics()
 
         # ---------------------------------------------
-        # Prepare Documents
+        # Convert to Documents
         # ---------------------------------------------
 
         prepared_documents = self.prepare_documents()
