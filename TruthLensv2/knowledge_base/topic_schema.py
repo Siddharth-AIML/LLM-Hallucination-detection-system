@@ -36,6 +36,29 @@ class Source:
 
     reliability_score: float = 0.0
 
+    @staticmethod
+    def from_dict(data):
+
+        return Source(
+
+            publisher=data["publisher"],
+
+            title=data["title"],
+
+            url=data["url"],
+
+            published_date=data["published_date"],
+
+            reliability_score=data.get(
+
+                "reliability_score",
+
+                0.0
+
+            )
+
+        )
+
 
 # =========================================================
 # Evidence Schema
@@ -58,11 +81,43 @@ class Evidence:
 
     retrieval_score: float = 0.0
 
-
 # =========================================================
 # Topic Schema
 # =========================================================
 
+    @property
+    def content(self):
+        """
+        Backward compatibility.
+
+        Allows evidence.content to work
+        exactly like evidence.text.
+        """
+
+        return self.text
+
+    @staticmethod
+    def from_dict(data):
+
+        return Evidence(
+
+            text=data["text"],
+
+            source=data["source"],
+
+            url=data["url"],
+
+            published_date=data["published_date"],
+
+            retrieval_score=data.get(
+
+                "retrieval_score",
+
+                0.0
+
+            )
+
+        )
 @dataclass
 class Topic:
     """
@@ -249,3 +304,186 @@ class Topic:
         """
 
         return asdict(self)
+
+    @staticmethod
+    def from_dict(data):
+
+        evidence = [
+
+            Evidence.from_dict(item)
+
+            for item in data.get(
+
+                "evidence",
+
+                []
+
+            )
+
+        ]
+
+        sources = [
+
+            Source.from_dict(item)
+
+            for item in data.get(
+
+                "sources",
+
+                []
+
+            )
+
+        ]
+
+        return Topic(
+
+            topic_id=data["topic_id"],
+
+            topic_name=data["topic_name"],
+
+            topic_category=data["topic_category"],
+
+            summary=data["summary"],
+
+            years=data.get(
+
+                "years",
+
+                []
+
+            ),
+
+            entities=data.get(
+
+                "entities",
+
+                []
+
+            ),
+
+            keywords=data.get(
+
+                "keywords",
+
+                []
+
+            ),
+
+            semantic_tags=data.get(
+
+                "semantic_tags",
+
+                []
+
+            ),
+
+            evidence=evidence,
+
+            sources=sources,
+
+            topic_embedding=data.get(
+
+                "topic_embedding",
+
+                []
+
+            ),
+
+            source_reliability=data.get(
+
+                "source_reliability",
+
+                0.0
+
+            ),
+
+            evidence_count=data.get(
+
+                "evidence_count",
+
+                len(evidence)
+
+            ),
+
+            trusted_source_count=data.get(
+
+                "trusted_source_count",
+
+                len(sources)
+
+            ),
+
+            average_retrieval_confidence=data.get(
+
+                "average_retrieval_confidence",
+
+                0.0
+
+            ),
+
+            summary_confidence=data.get(
+
+                "summary_confidence",
+
+                0.0
+
+            ),
+
+            status=data.get(
+
+                "status",
+
+                "ACTIVE"
+
+            ),
+
+            version=data.get(
+
+                "version",
+
+                1
+
+            ),
+
+            created_at=data.get(
+
+                "created_at",
+
+                datetime.now().isoformat()
+
+            ),
+
+            last_updated=data.get(
+
+                "last_updated",
+
+                datetime.now().isoformat()
+
+            ),
+
+            retrieval_count=data.get(
+
+                "retrieval_count",
+
+                0
+
+            ),
+
+            verification_count=data.get(
+
+                "verification_count",
+
+                0
+
+            ),
+
+            last_verified=data.get(
+
+                "last_verified",
+
+                ""
+
+            )
+
+        )
