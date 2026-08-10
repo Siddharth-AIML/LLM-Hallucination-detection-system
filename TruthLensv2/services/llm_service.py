@@ -24,6 +24,7 @@ class LLMService:
 
     def __init__(self):
         self.client = client
+        self.model_name = MODEL_NAME
 
     def generate_topic_metadata(self, documents):
         article_text = ""
@@ -80,7 +81,7 @@ Articles:
 """
 
         response = self.client.chat.completions.create(
-            model=MODEL_NAME,
+            model=self.model_name,
             temperature=0,
             messages=[{"role": "user", "content": prompt}]
         )

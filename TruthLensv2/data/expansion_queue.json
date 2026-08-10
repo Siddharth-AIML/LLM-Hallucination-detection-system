@@ -1,0 +1,9 @@
+[
+    {
+        "topic": "SpaceX reported a loss of $541 million.",
+        "status": "DISCARDED",
+        "created_at": "2026-08-10T14:32:36.748773",
+        "updated_at": "2026-08-10T14:32:36.754309",
+        "retry_count": 1
+    }
+]
