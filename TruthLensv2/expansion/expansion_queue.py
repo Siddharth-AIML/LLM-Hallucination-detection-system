@@ -8,19 +8,29 @@ Purpose:
     sufficient information was not available in the current
     Knowledge Base.
 
-The queue is intentionally independent from:
-    - Claim Processor
-    - Hybrid Retriever
-    - Verifier
+The queue is connected to:
+    - Topic Validator
+
+The queue will later connect to:
+    - Knowledge Expander
     - Knowledge Base Builder
 
-Those components will be connected later through the
-Knowledge Expansion pipeline.
+Important:
+
+    INVALID topics are discarded and NEVER enter the KB.
+
+    RETRY topics remain in the queue and can be checked again
+    during a future expansion cycle.
+
+    VALIDATED topics have passed external validation and are
+    ready for Knowledge Base expansion.
 """
 
 import json
 import os
 from datetime import datetime
+
+from expansion.topic_validator import TopicValidator
 
 
 class ExpansionQueue:
@@ -31,7 +41,8 @@ class ExpansionQueue:
 
     def __init__(
         self,
-        queue_file="data/expansion_queue.json"
+        queue_file="data/expansion_queue.json",
+        topic_validator=None
     ):
 
         self.queue_file = queue_file
@@ -39,6 +50,16 @@ class ExpansionQueue:
         self._ensure_storage()
 
         self.queue = self._load_queue()
+
+        # -------------------------------------------------
+        # Existing Topic Validator
+        # -------------------------------------------------
+
+        self.topic_validator = (
+            topic_validator
+            if topic_validator is not None
+            else TopicValidator()
+        )
 
 
     # =====================================================
@@ -93,7 +114,9 @@ class ExpansionQueue:
                 encoding="utf-8"
             ) as file:
 
-                data = json.load(file)
+                data = json.load(
+                    file
+                )
 
                 if isinstance(
                     data,
@@ -209,10 +232,14 @@ class ExpansionQueue:
 
                 return item
 
-
         # ---------------------------------------------
         # Create Queue Item
         # ---------------------------------------------
+
+        now = (
+            datetime.utcnow()
+            .isoformat()
+        )
 
         item = {
 
@@ -220,15 +247,9 @@ class ExpansionQueue:
 
             "status": "PENDING",
 
-            "created_at": (
-                datetime.utcnow()
-                .isoformat()
-            ),
+            "created_at": now,
 
-            "updated_at": (
-                datetime.utcnow()
-                .isoformat()
-            ),
+            "updated_at": now,
 
             "retry_count": 0
 
@@ -252,7 +273,7 @@ class ExpansionQueue:
     ):
 
         """
-        Return all topics waiting for expansion.
+        Return all topics waiting for validation.
         """
 
         return [
@@ -264,6 +285,32 @@ class ExpansionQueue:
             if item.get(
                 "status"
             ) == "PENDING"
+
+        ]
+
+
+    # =====================================================
+    # Get Validated Topics
+    # =====================================================
+
+    def get_validated_topics(
+        self
+    ):
+
+        """
+        Return topics that passed external validation
+        and are waiting for Knowledge Base expansion.
+        """
+
+        return [
+
+            item
+
+            for item in self.queue
+
+            if item.get(
+                "status"
+            ) == "VALIDATED"
 
         ]
 
@@ -302,6 +349,7 @@ class ExpansionQueue:
 
             PENDING
             PROCESSING
+            VALIDATED
             COMPLETED
             DISCARDED
             RETRY
@@ -311,6 +359,7 @@ class ExpansionQueue:
 
             "PENDING",
             "PROCESSING",
+            "VALIDATED",
             "COMPLETED",
             "DISCARDED",
             "RETRY"
@@ -323,13 +372,11 @@ class ExpansionQueue:
                 f"Invalid queue status: {status}"
             )
 
-
         normalized_topic = (
             self._normalize_topic(
                 topic
             )
         )
-
 
         for item in self.queue:
 
@@ -358,7 +405,6 @@ class ExpansionQueue:
 
                 return item
 
-
         return None
 
 
@@ -375,9 +421,11 @@ class ExpansionQueue:
         Increase retry count for a topic.
 
         Used for temporary failures such as:
+
             - network failure
             - source retrieval failure
             - temporary API failure
+            - insufficient evidence requiring another cycle
 
         The topic should NOT be discarded simply because
         an external service temporarily failed.
@@ -388,7 +436,6 @@ class ExpansionQueue:
                 topic
             )
         )
-
 
         for item in self.queue:
 
@@ -424,8 +471,281 @@ class ExpansionQueue:
 
                 return item
 
-
         return None
+
+
+    # =====================================================
+    # Validate Pending Topic
+    # =====================================================
+
+    def validate_topic(
+        self,
+        topic
+    ):
+
+        """
+        Validate one queued topic using TopicValidator V3.
+
+        Flow:
+
+            PENDING
+                ↓
+            PROCESSING
+                ↓
+            TopicValidator
+                ↓
+        ┌───────┼────────┐
+        ↓       ↓        ↓
+      VALID   INVALID   RETRY
+        ↓       ↓        ↓
+    VALIDATED DISCARDED RETRY
+        """
+
+        # -------------------------------------------------
+        # Find Queue Item
+        # -------------------------------------------------
+
+        normalized_topic = (
+            self._normalize_topic(
+                topic
+            )
+        )
+
+        queue_item = None
+
+        for item in self.queue:
+
+            existing_topic = (
+                self._normalize_topic(
+                    item.get(
+                        "topic",
+                        ""
+                    )
+                )
+            )
+
+            if (
+                existing_topic
+                == normalized_topic
+            ):
+
+                queue_item = item
+                break
+
+        if queue_item is None:
+
+            return {
+                "topic": topic,
+                "status": "INVALID",
+                "reason":
+                    "Topic does not exist in queue."
+            }
+
+        # -------------------------------------------------
+        # Mark Processing
+        # -------------------------------------------------
+
+        queue_item["status"] = "PROCESSING"
+
+        queue_item["updated_at"] = (
+            datetime.utcnow()
+            .isoformat()
+        )
+
+        self._save_queue()
+
+        # -------------------------------------------------
+        # Run Topic Validator
+        # -------------------------------------------------
+
+        try:
+
+            validation_result = (
+                self.topic_validator.validate_topic(
+                    topic
+                )
+            )
+
+        except Exception as error:
+
+            # ---------------------------------------------
+            # Temporary failure
+            # ---------------------------------------------
+
+            queue_item["retry_count"] = (
+                queue_item.get(
+                    "retry_count",
+                    0
+                ) + 1
+            )
+
+            queue_item["status"] = "RETRY"
+
+            queue_item["updated_at"] = (
+                datetime.utcnow()
+                .isoformat()
+            )
+
+            queue_item[
+                "validation_error"
+            ] = str(error)
+
+            self._save_queue()
+
+            return {
+                "topic": topic,
+                "status": "RETRY",
+                "reason":
+                    "Topic validation failed.",
+                "error": str(error)
+            }
+
+        # -------------------------------------------------
+        # Read Validator Status
+        # -------------------------------------------------
+
+        validation_status = str(
+            validation_result.get(
+                "status",
+                "RETRY"
+            )
+        ).upper()
+
+        # =================================================
+        # VALID
+        # =================================================
+
+        if validation_status == "VALID":
+
+            queue_item["status"] = "VALIDATED"
+
+            queue_item["updated_at"] = (
+                datetime.utcnow()
+                .isoformat()
+            )
+
+            queue_item[
+                "validation"
+            ] = validation_result
+
+            self._save_queue()
+
+            return validation_result
+
+        # =================================================
+        # INVALID
+        # =================================================
+
+        if validation_status == "INVALID":
+
+            # -------------------------------------------------
+            # IMPORTANT:
+            #
+            # Invalid topics are permanently marked DISCARDED.
+            #
+            # They must NEVER be passed to Knowledge Expander.
+            # -------------------------------------------------
+
+            queue_item["status"] = "DISCARDED"
+
+            queue_item["updated_at"] = (
+                datetime.utcnow()
+                .isoformat()
+            )
+
+            queue_item[
+                "validation"
+            ] = validation_result
+
+            self._save_queue()
+
+            return validation_result
+
+        # =================================================
+        # RETRY
+        # =================================================
+
+        # Anything else from validator is treated as
+        # temporary / insufficient evidence.
+
+        queue_item["retry_count"] = (
+            queue_item.get(
+                "retry_count",
+                0
+            ) + 1
+        )
+
+        queue_item["status"] = "RETRY"
+
+        queue_item["updated_at"] = (
+            datetime.utcnow()
+            .isoformat()
+        )
+
+        queue_item[
+            "validation"
+        ] = validation_result
+
+        self._save_queue()
+
+        return validation_result
+
+
+    # =====================================================
+    # Process Pending Topics
+    # =====================================================
+
+    def process_pending_topics(
+        self
+    ):
+
+        """
+        Validate every PENDING topic.
+
+        This method is designed for the future
+        6-hour automation.
+
+        It does NOT perform Knowledge Base expansion.
+
+        It only performs:
+
+            Queue
+              ↓
+            Validator
+              ↓
+        VALID / INVALID / RETRY
+
+        Returns a list of validation results.
+        """
+
+        pending_topics = (
+            self.get_pending_topics()
+        )
+
+        results = []
+
+        for item in pending_topics:
+
+            topic = item.get(
+                "topic",
+                ""
+            )
+
+            if not topic:
+
+                continue
+
+            result = (
+                self.validate_topic(
+                    topic
+                )
+            )
+
+            results.append(
+                result
+            )
+
+        return results
 
 
     # =====================================================
@@ -450,11 +770,9 @@ class ExpansionQueue:
             )
         )
 
-
         original_length = len(
             self.queue
         )
-
 
         self.queue = [
 
@@ -471,7 +789,6 @@ class ExpansionQueue:
 
         ]
 
-
         if len(
             self.queue
         ) != original_length:
@@ -479,7 +796,6 @@ class ExpansionQueue:
             self._save_queue()
 
             return True
-
 
         return False
 
@@ -537,59 +853,77 @@ class ExpansionQueue:
 if __name__ == "__main__":
 
     print()
-    print("=" * 60)
-    print("TruthLens Expansion Queue Test")
+
     print("=" * 60)
 
+    print(
+        "TruthLens Expansion Queue + "
+        "Topic Validator Test"
+    )
+
+    print("=" * 60)
 
     queue = ExpansionQueue()
 
-
-    # ---------------------------------------------
-    # Test 1: Add Topic
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Test Topic
+    # -----------------------------------------------------
 
     topic = (
         "SpaceX reported a loss of $541 million."
     )
+
+    # -----------------------------------------------------
+    # Add Topic
+    # -----------------------------------------------------
 
     item = queue.add_topic(
         topic
     )
 
     print()
-    print("Added Topic:")
+
+    print(
+        "Queue Item:"
+    )
+
     print(
         item
     )
 
-
-    # ---------------------------------------------
-    # Test 2: Duplicate Topic
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Duplicate Test
+    # -----------------------------------------------------
 
     duplicate = queue.add_topic(
         "  SpaceX reported a loss of $541 million.  "
     )
 
     print()
-    print("Duplicate Result:")
+
+    print(
+        "Duplicate Result:"
+    )
+
     print(
         duplicate
     )
 
     print()
+
     print(
         f"Queue Size: {queue.size()}"
     )
 
-
-    # ---------------------------------------------
-    # Test 3: Pending Topics
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Pending Topics
+    # -----------------------------------------------------
 
     print()
-    print("Pending Topics:")
+
+    print(
+        "Pending Topics:"
+    )
 
     for pending in (
         queue.get_pending_topics()
@@ -599,52 +933,95 @@ if __name__ == "__main__":
             f"- {pending['topic']}"
         )
 
-
-    # ---------------------------------------------
-    # Test 4: Processing
-    # ---------------------------------------------
-
-    queue.update_status(
-        topic,
-        "PROCESSING"
-    )
+    # -----------------------------------------------------
+    # Validator Test
+    # -----------------------------------------------------
 
     print()
+
     print(
-        "Status changed to PROCESSING."
+        "Running Topic Validator..."
     )
 
-
-    # ---------------------------------------------
-    # Test 5: Temporary Failure
-    # ---------------------------------------------
-
-    queue.increment_retry(
-        topic
+    result = (
+        queue.validate_topic(
+            topic
+        )
     )
+
+    # -----------------------------------------------------
+    # Validation Result
+    # -----------------------------------------------------
 
     print()
+
     print(
-        "Temporary failure simulated."
+        "Validation Result:"
     )
 
-
-    # ---------------------------------------------
-    # Test 6: Discard
-    # ---------------------------------------------
-
-    queue.update_status(
-        topic,
-        "DISCARDED"
-    )
-
-    print()
     print(
-        "Topic marked as DISCARDED."
+        f"Topic      : "
+        f"{result.get('topic', topic)}"
     )
 
+    print(
+        f"Status     : "
+        f"{result.get('status', '')}"
+    )
+
+    print(
+        f"Relation   : "
+        f"{result.get('llm_relation', 'NEUTRAL')}"
+    )
+
+    print(
+        f"Confidence : "
+        f"{result.get('confidence', 0.0):.4f}"
+    )
+
+    print(
+        f"Reason     : "
+        f"{result.get('reason', '')}"
+    )
+
+    # -----------------------------------------------------
+    # Queue State After Validation
+    # -----------------------------------------------------
 
     print()
+
+    print(
+        "Queue State After Validation:"
+    )
+
+    for item in queue.get_all_topics():
+
+        print(
+            item
+        )
+
+    # -----------------------------------------------------
+    # Validated Topics
+    # -----------------------------------------------------
+
+    print()
+
+    print(
+        "Validated Topics:"
+    )
+
+    for item in queue.get_validated_topics():
+
+        print(
+            f"- {item['topic']}"
+        )
+
+    print()
+
     print("=" * 60)
-    print("Expansion Queue Test Complete")
+
+    print(
+        "Expansion Queue Test Complete"
+    )
+
     print("=" * 60)

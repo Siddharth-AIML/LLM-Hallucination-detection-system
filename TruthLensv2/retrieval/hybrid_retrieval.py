@@ -48,6 +48,13 @@ from knowledge_base.topic_schema import (
     Evidence
 )
 
+# =========================================================
+# Knowledge Expansion Integration
+# =========================================================
+# Used only when retrieval cannot find sufficient KB evidence.
+# Core retrieval logic remains unchanged.
+from expansion.expansion_queue import ExpansionQueue
+
 
 # =========================================================
 # Paths
@@ -1182,44 +1189,106 @@ class HybridRetriever:
                     return validated_results[:top_k]
 
     def queue_missing_topic(
-    
+
             self,
-    
+
             processed_claim: ProcessedClaim
-    
+
         ):
-    
+
             """
-            Placeholder.
-    
-            In TruthLens V2 this method will
-            later call the Expansion Manager.
-    
-            ExpansionManager.queue_topic(...)
-    
-            For now we only print the request.
+            Integration point with the existing Knowledge
+            Expansion Queue.
+
+            Core retrieval behavior is unchanged.
+
+            When Retrieval V2 cannot find sufficient evidence,
+            the missing claim is added to the existing queue
+            as PENDING.
+
+            ExpansionQueue handles duplicate prevention, so
+            repeated retrieval failures for the same claim do
+            not create duplicate queue entries.
             """
-    
+
             print()
-    
+
             print(
-    
+
                 "Knowledge Expansion Required"
-    
+
             )
-    
+
             print(
-    
+
                 "Missing Claim :"
-    
+
             )
-    
+
             print(
-    
+
                 processed_claim.original_claim
-    
+
             )
-    
+
+            # -------------------------------------------------
+            # Knowledge Expansion Integration ONLY
+            # -------------------------------------------------
+            # This method does NOT:
+            #   - validate the topic
+            #   - search external sources
+            #   - modify the Knowledge Base
+            #   - expand the topic
+            #
+            # It only places the missing claim into the
+            # existing ExpansionQueue.
+            # -------------------------------------------------
+
+            try:
+
+                expansion_queue = ExpansionQueue()
+
+                queue_item = expansion_queue.add_topic(
+                    processed_claim.original_claim
+                )
+
+                print()
+
+                if queue_item is not None:
+
+                    print(
+                        "Expansion Queue:"
+                    )
+
+                    print(
+                        f"Topic  : "
+                        f"{queue_item.get('topic', '')}"
+                    )
+
+                    print(
+                        f"Status : "
+                        f"{queue_item.get('status', 'PENDING')}"
+                    )
+
+                else:
+
+                    print(
+                        "Warning: Missing claim could not "
+                        "be added to Expansion Queue."
+                    )
+
+            except Exception as error:
+
+                # Retrieval must still return its normal
+                # INSUFFICIENT_INFORMATION result even if
+                # queue integration temporarily fails.
+                print()
+
+                print(
+                    "Warning: Knowledge Expansion Queue "
+                    f"integration failed: {error}"
+                )
+
             print()
             print("=" * 60)
 
