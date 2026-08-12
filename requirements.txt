@@ -1,0 +1,40 @@
+# Core scientific / ML
+numpy
+pandas
+scikit-learn
+
+# NLP
+spacy
+keybert
+
+# Sentence embeddings / Transformers
+sentence-transformers
+transformers
+torch
+
+# Vector similarity search
+faiss-cpu
+
+# Lexical retrieval
+rank-bm25
+
+# HTTP / API
+requests
+httpx
+
+# FastAPI backend
+fastapi
+uvicorn
+
+# Environment variables
+python-dotenv
+
+# Web / HTML processing
+beautifulsoup4
+lxml
+
+# External search / news
+google-api-python-client
+
+# Utilities
+tqdm
