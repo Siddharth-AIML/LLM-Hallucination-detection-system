@@ -27,9 +27,10 @@ Siddharth Metkari
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 
 import faiss
 import numpy as np
@@ -59,6 +60,11 @@ from expansion.expansion_queue import ExpansionQueue
 # =========================================================
 # Paths
 # =========================================================
+
+# Module-level logger. Handler configuration is the
+# application's responsibility; see verification/verifier.py.
+logger = logging.getLogger(__name__)
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -1272,6 +1278,13 @@ class HybridRetriever:
 
                 else:
 
+                    logger.warning(
+                        "Expansion queue returned no item "
+                        "for missing claim %r; it will not "
+                        "be expanded.",
+                        processed_claim.original_claim
+                    )
+
                     print(
                         "Warning: Missing claim could not "
                         "be added to Expansion Queue."
@@ -1282,6 +1295,17 @@ class HybridRetriever:
                 # Retrieval must still return its normal
                 # INSUFFICIENT_INFORMATION result even if
                 # queue integration temporarily fails.
+                #
+                # Logged because a claim silently failing to
+                # enqueue here never reaches Stage 4, so the
+                # KB never self-heals for it.
+                logger.exception(
+                    "Knowledge Expansion Queue integration "
+                    "failed for claim %r; the claim will "
+                    "not be queued for expansion.",
+                    processed_claim.original_claim
+                )
+
                 print()
 
                 print(

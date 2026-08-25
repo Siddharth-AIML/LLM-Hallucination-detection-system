@@ -11,7 +11,7 @@ Author : Siddharth Metkari
 =========================================================
 """
 
-from typing import Dict, List
+from typing import Dict
 
 from knowledge_base.topic_schema import Topic
 

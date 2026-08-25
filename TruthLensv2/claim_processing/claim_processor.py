@@ -55,10 +55,9 @@ with HybridRetriever and Verifier.
 """
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 import spacy
 from keybert import KeyBERT
@@ -526,6 +525,31 @@ class RichClaimExtractor:
 
             self.llm_service = llm_service
 
+        # Load the NER model once and reuse it.
+        # Previously _extract_claim_entities() called
+        # spacy.load() on every claim (~241 ms per call
+        # against ~5 ms of actual inference work).
+        self.nlp = spacy.load(
+
+            "en_core_web_sm"
+
+        )
+
+        # Sentence segmentation only needs the rule-based
+        # sentencizer, so it keeps its own lightweight
+        # blank pipeline instead of rebuilding one per call.
+        self.sentencizer = spacy.blank(
+
+            "en"
+
+        )
+
+        self.sentencizer.add_pipe(
+
+            "sentencizer"
+
+        )
+
         print(
 
             "Rich Claim Extractor Ready.\n"
@@ -556,19 +580,7 @@ class RichClaimExtractor:
 
             return []
 
-        doc = spacy.blank(
-
-            "en"
-
-        )
-
-        doc.add_pipe(
-
-            "sentencizer"
-
-        )
-
-        parsed = doc(text)
+        parsed = self.sentencizer(text)
 
         sentences = []
 
@@ -754,16 +766,6 @@ Required schema:
             + answer
         )
 
-        prompt = (
-
-            system_prompt
-
-            + "\n\n"
-
-            + user_prompt
-
-        )
-
         response = self.llm_service.client.chat.completions.create(
 
             model=self.llm_service.model_name,
@@ -945,12 +947,6 @@ Required schema:
         the official retrieval representation.
         """
 
-        nlp = spacy.load(
-
-            "en_core_web_sm"
-
-        )
-
         allowed = {
 
             "PERSON",
@@ -969,7 +965,7 @@ Required schema:
 
         entities = []
 
-        doc = nlp(
+        doc = self.nlp(
 
             claim
 

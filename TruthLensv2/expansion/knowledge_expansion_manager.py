@@ -54,6 +54,7 @@ Important:
     - INVALID topics must never reach this manager.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -72,6 +73,12 @@ from expansion.expansion_queue import (
 # =========================================================
 # Project Paths
 # =========================================================
+
+# Module-level logger. The application configures handlers;
+# this module only records events. See verification/verifier.py
+# for the same rationale.
+logger = logging.getLogger(__name__)
+
 
 PROJECT_ROOT = (
     Path(__file__).resolve().parent.parent
@@ -435,7 +442,17 @@ class KnowledgeExpansionManager:
                     self.DISCARDED_STATUS
                 )
             except Exception:
-                pass
+                # Behaviour unchanged, but a failure here
+                # means the returned status says DISCARDED
+                # while the persisted queue entry does not,
+                # so the on-disk queue silently drifts out
+                # of sync with reality.
+                logger.exception(
+                    "Failed to persist DISCARDED status "
+                    "for topic %r. The queue file may now "
+                    "disagree with the returned result.",
+                    topic
+                )
 
             return {
                 "status": "DISCARDED",
@@ -674,6 +691,17 @@ class KnowledgeExpansionManager:
 
             except Exception:
 
+                # Falling back to an in-memory retry count.
+                # If this keeps failing the persisted count
+                # never advances, so a topic could retry
+                # past MAX_RETRIES across runs.
+                logger.exception(
+                    "Failed to increment persisted retry "
+                    "count for topic %r; falling back to "
+                    "an in-memory count.",
+                    topic
+                )
+
                 updated = None
 
             new_retry_count = (
@@ -714,7 +742,14 @@ class KnowledgeExpansionManager:
             )
 
         except Exception:
-            pass
+            # As above: the topic is reported DISCARDED
+            # after exhausting retries, but the queue entry
+            # may still say otherwise.
+            logger.exception(
+                "Failed to persist DISCARDED status for "
+                "topic %r after reaching the retry limit.",
+                topic
+            )
 
         result = {
             "status": "DISCARDED",
