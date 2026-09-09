@@ -864,7 +864,7 @@ class FetchNews:
 
         print(
 
-            f"\nDataset saved successfully."
+            "\nDataset saved successfully."
 
         )
 

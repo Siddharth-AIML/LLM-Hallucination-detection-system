@@ -7,6 +7,7 @@ the final TruthLens verdict.
 """
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -16,13 +17,43 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from groq import Groq
 
+from services.llm_service import MODEL_NAME
+
+
+# Module-level logger.
+#
+# No basicConfig() / handler is attached here on purpose:
+# configuring the root logger is the application's job, not
+# this module's. Without a configured handler these records
+# are simply not emitted, so existing console output is
+# unchanged.
+#
+# These log calls exist to make silent degradation
+# diagnosable. Several failure paths below fall back to a
+# NEUTRAL relation, which fuse_verification() then turns
+# into INSUFFICIENT_INFORMATION - indistinguishable from a
+# genuine "no evidence" abstention unless it is logged.
+logger = logging.getLogger(__name__)
+
 
 SUPPORTED = "SUPPORTED"
 CONTRADICTED = "CONTRADICTED"
 PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
 INSUFFICIENT_INFORMATION = "INSUFFICIENT_INFORMATION"
 
-MODEL_NAME = "openai/gpt-oss-120b"
+# The Groq model name is imported from the shared LLM
+# service rather than redeclared here.
+#
+# This module previously hardcoded its own copy
+# ("llama-3.3-70b-versatile"). When llm_service.py was
+# migrated to openai/gpt-oss-120b the verifier was missed,
+# and the decommissioned model returned 404 on every call -
+# silently degrading every verification to
+# INSUFFICIENT_INFORMATION. Sharing one constant makes that
+# class of drift impossible.
+#
+# MODEL_NAME is re-exported here so existing imports of
+# verification.verifier.MODEL_NAME keep working.
 
 MAX_EVIDENCE = 8
 MIN_EVIDENCE = 2
@@ -584,6 +615,18 @@ class Verifier:
             try:
                 value = float(value)
             except (TypeError, ValueError):
+                # A malformed reliability value is dropped
+                # from the average rather than counted as
+                # zero, so log it: MIN_RELIABILITY gates
+                # the verdict.
+                logger.warning(
+                    "Topic %r has non-numeric "
+                    "source_reliability %r; excluding it "
+                    "from the reliability average.",
+                    self.topic_name(candidate),
+                    getattr(topic, "source_reliability", None)
+                )
+
                 value = 0.0
 
             if value > 0:
@@ -629,20 +672,37 @@ class Verifier:
         if len(sets) < 2:
             return 0.0
 
-        base = sets[0]
+        # True pairwise Jaccard across all C(n,2) evidence
+        # pairs.
+        #
+        # This previously compared every set only against
+        # sets[0], which made the signal depend on the
+        # retrieval order of an arbitrary anchor: a single
+        # off-topic first item dragged the whole score down
+        # even when the remaining evidence agreed closely.
+        #
+        # The mean is used (rather than min or max) because
+        # this is a corroboration signal: it should reflect
+        # how much the evidence set agrees on average, not
+        # be decided by the single worst or best pair.
+        # MAX_EVIDENCE caps n at 8, so C(n,2) <= 28 and the
+        # quadratic comparison stays cheap.
         values = []
 
-        for other in sets[1:]:
-            union = base.union(other)
+        for first in range(len(sets)):
 
-            if not union:
-                continue
+            for second in range(first + 1, len(sets)):
 
-            values.append(
-                len(
-                    base.intersection(other)
-                ) / len(union)
-            )
+                union = sets[first].union(sets[second])
+
+                if not union:
+                    continue
+
+                values.append(
+                    len(
+                        sets[first].intersection(sets[second])
+                    ) / len(union)
+                )
 
         if not values:
             return 0.0
@@ -763,6 +823,23 @@ Rules:
             )
 
         except Exception as exc:
+            # Behaviour is unchanged (still degrades to
+            # NEUTRAL), but the cause is now recorded.
+            # This catches two very different failures -
+            # an API/network error and malformed JSON from
+            # parse_llm_json() - which are otherwise
+            # indistinguishable downstream.
+            logger.warning(
+                "Semantic analysis failed for claim %r "
+                "(%s: %s). Falling back to relation=NEUTRAL, "
+                "which will yield "
+                "INSUFFICIENT_INFORMATION.",
+                claim,
+                type(exc).__name__,
+                exc,
+                exc_info=True
+            )
+
             return {
                 "relation": "NEUTRAL",
                 "confidence": 0.0,
@@ -810,6 +887,16 @@ Rules:
             "NEUTRAL",
             "MIXED"
         }:
+            # The model returned a relation outside the
+            # allowed set. Coercing to NEUTRAL is the
+            # existing (safe) behaviour; log it so a prompt
+            # or model regression is visible.
+            logger.warning(
+                "LLM returned unrecognised relation %r; "
+                "coercing to NEUTRAL.",
+                relation
+            )
+
             relation = "NEUTRAL"
 
         try:
@@ -820,6 +907,15 @@ Rules:
                 )
             )
         except (TypeError, ValueError):
+            # A non-numeric confidence forces 0.0, which
+            # falls below the 0.60 gate and therefore
+            # blocks any decisive verdict.
+            logger.warning(
+                "LLM returned non-numeric confidence %r; "
+                "defaulting to 0.0.",
+                data.get("confidence")
+            )
+
             confidence = 0.0
 
         return {
@@ -1104,6 +1200,17 @@ Rules:
         try:
             score = float(score)
         except (TypeError, ValueError):
+            # Retrieval confidence caps the final reported
+            # confidence via min(), so a silent 0.0 here
+            # would zero out an otherwise valid verdict.
+            logger.warning(
+                "Top candidate %r has non-numeric "
+                "hybrid_score %r; treating retrieval "
+                "confidence as 0.0.",
+                self.topic_name(candidates[0]),
+                getattr(candidates[0], "hybrid_score", None)
+            )
+
             score = 0.0
 
         return round(

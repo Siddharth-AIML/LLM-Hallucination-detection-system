@@ -27,8 +27,7 @@ from retrieval.hybrid_retrieval import (
 )
 
 from verification.verifier import (
-    Verifier,
-    VerificationResult
+    Verifier
 )
 
 

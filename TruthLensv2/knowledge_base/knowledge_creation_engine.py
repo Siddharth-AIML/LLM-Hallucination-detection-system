@@ -35,13 +35,9 @@ Siddharth Metkari
 =========================================================
 """
 
-import json
 import uuid
-from collections import Counter
 from typing import List
 from services.llm_service import LLMService
-
-import numpy as np
 
 import spacy
 
@@ -562,8 +558,6 @@ class KnowledgeCreationEngine:
         best_score = 0
 
         for topic in self.kb.topics:
-
-            topic_text = self.topic_to_text(topic)
 
             topic_embedding = topic.topic_embedding
 

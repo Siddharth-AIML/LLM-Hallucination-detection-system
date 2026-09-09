@@ -21,7 +21,6 @@ Responsible for:
 import json
 import uuid
 from pathlib import Path
-from dataclasses import asdict
 
 from knowledge_base.topic_schema import (
     Topic,
