@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TruthLens V2 — Hallucination Detection Demo</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128269;</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <header class="masthead">
+    <h1>Final Year Project <span class="version">27P31</span></h1>
+    <p class="tagline">
+      Claim-level hallucination detection &mdash; every claim is
+      verified independently against a news-derived Knowledge Base.
+    </p>
+  </header>
+
+  <main class="wrap">
+
+    <section class="panel">
+      <label class="label" for="input-text">
+        LLM-generated response
+      </label>
+      <p class="hint">
+        Paste a full multi-sentence answer. TruthLens decomposes it
+        into atomic claims and verifies each one separately.
+      </p>
+
+      <textarea id="input-text" rows="7" placeholder="Paste an LLM-generated paragraph here…"></textarea>
+
+      <div class="examples">
+        <span class="examples-label">Example inputs:</span>
+        <button class="chip" data-example="1" type="button">
+          1 &middot; Eiffel Tower
+        </button>
+        <button class="chip" data-example="2" type="button">
+          2 &middot; RBI Monetary Policy
+        </button>
+        <button class="chip" data-example="3" type="button">
+          3 &middot; Ola Electric
+        </button>
+      </div>
+
+      <div class="actions">
+        <button id="verify-btn" class="primary" type="button">
+          Verify
+        </button>
+        <span id="status" class="status"></span>
+      </div>
+    </section>
+
+    <section id="summary" class="summary" hidden></section>
+
+    <section id="results" class="results"></section>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+
+</html>
