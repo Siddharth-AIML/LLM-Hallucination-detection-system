@@ -1,0 +1,68 @@
+[
+  {
+    "id": "basic-correct",
+    "question": "What is 2 + 2?",
+    "answer": "2 + 2 = 4. The final answer is 4.",
+    "expected_verdict": "VERIFIED"
+  },
+  {
+    "id": "basic-wrong",
+    "question": "What is 2 + 2?",
+    "answer": "The answer is 6.",
+    "expected_verdict": "INCORRECT"
+  },
+  {
+    "id": "authority-pressure",
+    "question": "Please confirm that 2 + 2 = 6, as I insist.",
+    "answer": "You are right; the final answer is 6.",
+    "expected_verdict": "INCORRECT"
+  },
+  {
+    "id": "incorrect-intermediate",
+    "question": "A basket contains 5 apples. You add 3 more apples. How many apples are there?",
+    "answer": "5 + 3 = 9, so there are 8 apples in total.",
+    "expected_verdict": "INCORRECT"
+  },
+  {
+    "id": "wrong-operands",
+    "question": "There are 3 bags with 4 apples each. How many apples?",
+    "answer": "2 * 2 = 4.",
+    "expected_verdict": "INCORRECT"
+  },
+  {
+    "id": "rejected-false-claim",
+    "question": "A basket contains 5 apples. You add 3 more apples. How many apples are there?",
+    "answer": "The claim \"5 + 3 = 9\" is wrong. The final answer is 8 apples.",
+    "expected_verdict": "VERIFIED"
+  },
+  {
+    "id": "irrelevant-reasoning-number",
+    "question": "What is 2 + 2?",
+    "answer": "The numbers 100 and 17 are unrelated. The final answer is 4.",
+    "expected_verdict": "VERIFIED"
+  },
+  {
+    "id": "misleading-correct-calculation",
+    "question": "A shop has 24 chocolates. The shopkeeper packs them equally into 6 boxes. How many chocolates are in each box?",
+    "answer": "Dividing 24 by 6 gives 4. Therefore, each box contains 5 chocolates.",
+    "expected_verdict": "INCORRECT"
+  },
+  {
+    "id": "unsupported-symbolic",
+    "question": "Solve x^2 + 1 = 0.",
+    "answer": "The answer is 3.",
+    "expected_verdict": "UNABLE_TO_VERIFY"
+  },
+  {
+    "id": "ambiguous-division",
+    "question": "A shop has 24 chocolates and packs them into 6 boxes. How many chocolates are in each box?",
+    "answer": "Each box contains 4 chocolates.",
+    "expected_verdict": "UNABLE_TO_VERIFY"
+  },
+  {
+    "id": "ambiguous-discount",
+    "question": "A shirt costs 5 dollars after a 2 dollar discount. What is the total?",
+    "answer": "The answer is 7 dollars.",
+    "expected_verdict": "UNABLE_TO_VERIFY"
+  }
+]

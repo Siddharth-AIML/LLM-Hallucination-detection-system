@@ -2018,34 +2018,71 @@ FUTURE RETRIEVAL
 
 # 🧮 Independent Math Verification
 
-Math verification is an isolated capability alongside (not inside) the existing
+Math verification is a separate capability; it does not call or alter the
 claim extraction, FAISS + BM25 retrieval, factual verifier, or knowledge
-expansion pipeline. It is exposed through the existing FastAPI demo and its
-current HTML/CSS/JavaScript frontend.
+expansion pipeline. It is served by the existing FastAPI demo and its
+HTML/CSS/JavaScript frontend.
 
-The verifier reconstructs a limited set of explicit arithmetic expressions and
-simple, unambiguous word-problem operations from the **question**, evaluates
-them with bounded Python arithmetic, and uses SymPy for exact result
-comparison. It never evaluates generated Python or trusts an equation or
-assertion in the model response as evidence. Unsupported, ambiguous, or
-symbolic questions return `UNABLE_TO_VERIFY`; this is intentional. It is not a
-general-purpose algebra or natural-language math solver.
+The verifier first handles supported explicit arithmetic and conservative
+word-problem patterns deterministically. For other natural-language problems,
+it can optionally ask a configured Groq model for a structured interpretation
+of the **question only**. The proposed expression is schema-validated, limited
+to allowlisted arithmetic-tree nodes, and checked against quoted numeric
+evidence, operand counts, explicit units, and operation wording before safe
+evaluation. Python `eval()` and `exec()` are never used. SymPy performs exact
+rational evaluation and comparison; explicitly requested decimal rounding is
+applied using exact half-up arithmetic.
+
+The response is checked independently for an extractable final answer and
+endorsed arithmetic assertions. A false calculation can therefore yield
+`INCORRECT` even when the stated final answer is right. Correct arithmetic
+does not validate an unrelated or incorrectly reconstructed question
+expression. Ambiguous, unsupported, low-confidence, malformed, or
+insufficiently grounded interpretations abstain with `UNABLE_TO_VERIFY`.
+
+Supported operations include exact addition, subtraction, multiplication,
+division, bounded integer powers, perfect rational square roots, and selected
+length, mass, time, volume, currency, percentage, and count units. This is not
+a general algebra solver, symbolic equation solver, or proof of a model's
+natural-language understanding. Complex multi-step problems, unsupported
+unit algebra, fractional answers without clear representation, ambiguous
+wording, and arithmetic assertions the checker cannot safely parse may cause
+abstention. A model-proposed interpretation remains a proposal: it is never
+treated as ground truth merely because it executes.
 
 ## Setup and tests
 
-Install the added SymPy dependency along with the project's requirements from
-the repository root:
+Install the project requirements from the repository root:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Run focused verifier and API tests from `TruthLensv2`:
+The optional structured interpreter requires `GROQ_API_KEY`; configure it as
+an environment variable or in a local `.env` file. `GROQ_MODEL_NAME` selects
+the model (default `openai/gpt-oss-120b`). Deterministic supported problems do
+not require credentials, and unavailable credentials cause unsupported
+problems to abstain rather than to be guessed.
+
+Run the full test suite from `TruthLensv2`:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Unit and API tests use offline/mock interpreters and do not make provider calls.
+
+Run the hand-labelled, offline adversarial evaluation without downloading data
+or calling an LLM:
+
+```powershell
+python scripts/evaluate_math_adversarial.py
+```
+
+It reports verdict accuracy, incorrect-answer detection precision/recall/F1,
+unverified cases, and execution failures for the checked-in manually labelled
+fixture. Use `--output results.json` to save the detailed report.
 
 ## API usage
 
@@ -2068,16 +2105,18 @@ Content-Type: application/json
 ```
 
 The response includes `verdict` (`VERIFIED`, `INCORRECT`, or
-`UNABLE_TO_VERIFY`), the question-derived `extracted_expression`,
-`computed_result`, the extracted `original_answer`, an explanation, and
-`is_conclusive`/`verification_status`. The route rejects blank or oversized
-inputs and applies a two-second request timeout. It does not run LLM-supplied
-code.
+`UNABLE_TO_VERIFY`), question-derived `extracted_expression`,
+`computed_result`, exact pre-rounding result, extracted `original_answer`,
+expression tree, sourced quantities, solution trace, reasoning assertions,
+verification coverage, explanation, and `is_conclusive`/
+`verification_status`. The endpoint validates nonblank bounded inputs and
+applies a 10-second request timeout. It does not accept or execute generated
+code or expose provider credentials.
 
-The demo's **Math verification** mode displays the original question, LLM
-answer, extracted answer, independently reconstructed expression and result,
-verdict, explanation, and whether verification was conclusive. The factual
-verification mode remains unchanged.
+The demo's **Math verification** mode displays the question, LLM answer,
+extracted answer, expression, independent result, verdict, explanation,
+conclusiveness, and structured diagnostics. The factual verification mode
+and its API route remain unchanged.
 
 ## GSM8K benchmark (opt-in)
 
@@ -2099,19 +2138,20 @@ Run a bounded test-split evaluation from the `TruthLensv2` directory:
 python scripts/benchmark_gsm8k.py --split test --limit 100 --model openai/gpt-oss-120b
 ```
 
-For a development run on training data, use `--split train`. To process a
-complete split, explicitly pass `--limit 0`; streaming avoids materializing
-the whole dataset in memory, but this will still make model calls for every
-example and may incur provider cost/rate limits. The script writes per-example
-answers, verdicts, reconstructed expressions/results, corrections, and
-failures to `gsm8k_results.csv`, plus summary metrics to
-`gsm8k_results.summary.json` (or files based on `--output`).
+For development, use `--split train`. To process a complete split, explicitly
+pass `--limit 0`; streaming avoids materializing the full dataset in memory,
+but still makes one model call per example and may incur provider cost or rate
+limits. The script writes per-example inputs, model answers, independent
+baseline extraction, verdicts, expressions/results, post-verification
+corrections, latency, model-call counts, extraction failures, and execution
+failures to CSV, plus summary metrics to JSON.
 
-Reported metrics include baseline and post-verification answer accuracy,
-incorrect-answer detection precision/recall/F1, unverified cases, and
-execution failures. A correction is applied only for `INCORRECT` cases with a
-question-derived calculation; inconclusive cases are left unchanged. GSM8K
-was not downloaded or run as part of implementation, so no benchmark scores
-are claimed here. Coverage on GSM8K is expected to be limited because the
-verifier deliberately abstains on multi-step or ambiguous calculations it
-cannot reconstruct safely.
+Metrics include baseline and post-verification accuracy, incorrect-answer
+detection precision/recall/F1, abstention rate and count, answer-extraction
+failures, baseline and verifier latency, baseline/verifier/total model-call
+counts, and execution failures.
+Baseline extraction is taken directly from the raw model answer. The
+post-verification policy replaces an answer only when verification returns
+`INCORRECT` and a question-derived computed result is available; abstentions
+leave the baseline answer unchanged. GSM8K was not downloaded or run as part
+of implementation, so no benchmark scores are claimed.

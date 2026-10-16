@@ -180,10 +180,10 @@ async def verify_math(request: MathVerifyRequest):
             asyncio.to_thread(
                 verify_math_answer, request.question, request.answer
             ),
-            timeout=2.0,
+            timeout=10.0,
         )
     except asyncio.TimeoutError as error:
-        logger.warning("Math verification exceeded its 2-second limit")
+        logger.warning("Math verification exceeded its 10-second limit")
         raise HTTPException(
             status_code=504, detail="Math verification timed out."
         ) from error

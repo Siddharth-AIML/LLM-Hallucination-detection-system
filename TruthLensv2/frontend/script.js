@@ -217,10 +217,89 @@ function renderMath(result) {
     "Independently computed result",
     result.computed_result || "Not computed"
   );
+  if (
+    result.computed_exact_result &&
+    result.computed_exact_result !== result.computed_result
+  ) {
+    appendMathField(
+      card,
+      "Exact result before rounding",
+      result.computed_exact_result
+    );
+    appendMathField(
+      card,
+      "Requested rounding",
+      result.rounding_digits + " decimal place(s)"
+    );
+  }
+  if (result.expression_tree) {
+    appendMathField(
+      card,
+      "Structured expression",
+      JSON.stringify(result.expression_tree, null, 2)
+    );
+  }
+  if (result.quantities && result.quantities.length) {
+    appendMathField(
+      card,
+      "Question quantities and roles",
+      result.quantities
+        .map((item) => item.value + (item.unit ? " " + item.unit : "") +
+          " — " + item.semantic_role + " (evidence: " + item.evidence + ")")
+        .join("\n")
+    );
+  }
+  if (result.solution_trace && result.solution_trace.length) {
+    appendMathField(
+      card,
+      "Solution trace",
+      result.solution_trace.join("\n")
+    );
+  }
+  if (result.reasoning_assertions && result.reasoning_assertions.length) {
+    appendMathField(
+      card,
+      "Reasoning assertions checked",
+      result.reasoning_assertions
+        .map((item) => item.expression + " = " + item.stated_result +
+          " — " + item.status + ": " + item.explanation)
+        .join("\n")
+    );
+  }
+  if (result.intermediate_errors && result.intermediate_errors.length) {
+    appendMathField(
+      card,
+      "Intermediate errors",
+      result.intermediate_errors
+        .map((item) => item.expression + " = " + item.stated_result)
+        .join("\n")
+    );
+  }
+  if (result.verification_coverage) {
+    appendMathField(
+      card,
+      "Verification coverage",
+      JSON.stringify(result.verification_coverage, null, 2)
+    );
+  }
   appendMathField(
     card,
     "Conclusive",
     result.is_conclusive ? "Yes" : "No — unable to verify"
+  );
+  if (result.inconclusive_reason) {
+    appendMathField(
+      card,
+      "Inconclusive reason",
+      result.inconclusive_reason
+    );
+  }
+  appendMathField(
+    card,
+    "Verification diagnostics",
+    "Interpreter: " + (result.interpreter || "deterministic") +
+      "; model calls: " + (result.model_calls || 0) +
+      "; latency: " + (result.latency_ms || 0) + " ms"
   );
   appendMathField(card, "Explanation", result.explanation);
   resultsEl.appendChild(card);
