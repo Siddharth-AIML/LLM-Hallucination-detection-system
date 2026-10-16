@@ -2013,3 +2013,105 @@ FUTURE RETRIEVAL
 ### Detect → Retrieve → Verify → Expand → Learn
 
 **Responsible AI for more trustworthy LLM responses.**
+
+---
+
+# 🧮 Independent Math Verification
+
+Math verification is an isolated capability alongside (not inside) the existing
+claim extraction, FAISS + BM25 retrieval, factual verifier, or knowledge
+expansion pipeline. It is exposed through the existing FastAPI demo and its
+current HTML/CSS/JavaScript frontend.
+
+The verifier reconstructs a limited set of explicit arithmetic expressions and
+simple, unambiguous word-problem operations from the **question**, evaluates
+them with bounded Python arithmetic, and uses SymPy for exact result
+comparison. It never evaluates generated Python or trusts an equation or
+assertion in the model response as evidence. Unsupported, ambiguous, or
+symbolic questions return `UNABLE_TO_VERIFY`; this is intentional. It is not a
+general-purpose algebra or natural-language math solver.
+
+## Setup and tests
+
+Install the added SymPy dependency along with the project's requirements from
+the repository root:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run focused verifier and API tests from `TruthLensv2`:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+## API usage
+
+Start the demo from the `TruthLensv2` directory:
+
+```powershell
+uvicorn api:app --port 8000
+```
+
+Submit the question and full LLM response separately:
+
+```http
+POST /verify/math
+Content-Type: application/json
+
+{
+  "question": "Maya has 5 apples and buys 2 more. How many apples does she have?",
+  "answer": "She has 8 apples."
+}
+```
+
+The response includes `verdict` (`VERIFIED`, `INCORRECT`, or
+`UNABLE_TO_VERIFY`), the question-derived `extracted_expression`,
+`computed_result`, the extracted `original_answer`, an explanation, and
+`is_conclusive`/`verification_status`. The route rejects blank or oversized
+inputs and applies a two-second request timeout. It does not run LLM-supplied
+code.
+
+The demo's **Math verification** mode displays the original question, LLM
+answer, extracted answer, independently reconstructed expression and result,
+verdict, explanation, and whether verification was conclusive. The factual
+verification mode remains unchanged.
+
+## GSM8K benchmark (opt-in)
+
+The benchmark streams the official GSM8K `train` or `test` split, defaults to
+at most 100 test examples, and does not download data or call a model during
+normal setup or API operation. It uses the existing Groq provider; set
+`GROQ_API_KEY` and optionally `GROQ_MODEL_NAME`, or supply `--model`. The
+official test split is evaluation-only; do not tune prompts, verifier rules,
+or model selection against it. Install the optional dataset loader from the
+repository root:
+
+```powershell
+pip install -r requirements-benchmark.txt
+```
+
+Run a bounded test-split evaluation from the `TruthLensv2` directory:
+
+```powershell
+python scripts/benchmark_gsm8k.py --split test --limit 100 --model openai/gpt-oss-120b
+```
+
+For a development run on training data, use `--split train`. To process a
+complete split, explicitly pass `--limit 0`; streaming avoids materializing
+the whole dataset in memory, but this will still make model calls for every
+example and may incur provider cost/rate limits. The script writes per-example
+answers, verdicts, reconstructed expressions/results, corrections, and
+failures to `gsm8k_results.csv`, plus summary metrics to
+`gsm8k_results.summary.json` (or files based on `--output`).
+
+Reported metrics include baseline and post-verification answer accuracy,
+incorrect-answer detection precision/recall/F1, unverified cases, and
+execution failures. A correction is applied only for `INCORRECT` cases with a
+question-derived calculation; inconclusive cases are left unchanged. GSM8K
+was not downloaded or run as part of implementation, so no benchmark scores
+are claimed here. Coverage on GSM8K is expected to be limited because the
+verifier deliberately abstains on multi-step or ambiguous calculations it
+cannot reconstruct safely.

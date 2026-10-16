@@ -65,10 +65,38 @@ body {
   padding: 20px;
 }
 
+.mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mode-button {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 .label {
   display: block;
   font-weight: 600;
   font-size: 14px;
+}
+
+.math-answer-label {
+  margin-top: 16px;
 }
 
 .hint {
@@ -381,4 +409,52 @@ details.evidence[open] > summary::before {
   border-radius: 8px;
   padding: 14px 16px;
   font-size: 14px;
+}
+
+.math-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--insufficient);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.math-card.math-VERIFIED { border-left-color: var(--supported); }
+.math-card.math-INCORRECT { border-left-color: var(--contradicted); }
+.math-card.math-UNABLE_TO_VERIFY { border-left-color: var(--insufficient); }
+
+.math-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.math-result-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.math-badge-VERIFIED { background: var(--supported-bg); color: var(--supported); }
+.math-badge-INCORRECT { background: var(--contradicted-bg); color: var(--contradicted); }
+.math-badge-UNABLE_TO_VERIFY { background: var(--insufficient-bg); color: var(--insufficient); }
+
+.math-field {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.math-field-label {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.math-field p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
 }

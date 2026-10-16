@@ -51,6 +51,11 @@ const btnEl = document.getElementById("verify-btn");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const resultsEl = document.getElementById("results");
+const factualInputEl = document.getElementById("factual-input");
+const mathInputEl = document.getElementById("math-input");
+const mathQuestionEl = document.getElementById("math-question");
+const mathAnswerEl = document.getElementById("math-answer");
+let activeMode = "facts";
 
 document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => {
@@ -59,7 +64,32 @@ document.querySelectorAll(".chip").forEach((chip) => {
   });
 });
 
-btnEl.addEventListener("click", verify);
+document.querySelectorAll(".mode-button").forEach((button) => {
+  button.addEventListener("click", () => setMode(button.dataset.mode));
+});
+
+btnEl.addEventListener("click", () => {
+  if (activeMode === "math") {
+    verifyMath();
+  } else {
+    verify();
+  }
+});
+
+function setMode(mode) {
+  activeMode = mode;
+  factualInputEl.hidden = mode !== "facts";
+  mathInputEl.hidden = mode !== "math";
+  btnEl.textContent = mode === "math" ? "Verify math" : "Verify";
+  statusEl.textContent = "";
+  summaryEl.hidden = true;
+  resultsEl.innerHTML = "";
+  document.querySelectorAll(".mode-button").forEach((button) => {
+    const selected = button.dataset.mode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
 
 async function verify() {
   const text = inputEl.value.trim();
@@ -113,6 +143,99 @@ async function verify() {
   } finally {
     btnEl.disabled = false;
   }
+}
+
+async function verifyMath() {
+  const question = mathQuestionEl.value.trim();
+  const answer = mathAnswerEl.value.trim();
+
+  resultsEl.innerHTML = "";
+  summaryEl.hidden = true;
+
+  if (!question || !answer) {
+    showError("Enter both the original math question and the LLM answer.");
+    return;
+  }
+
+  btnEl.disabled = true;
+  statusEl.innerHTML =
+    '<span class="spinner"></span>Independently checking the calculation…';
+
+  try {
+    const response = await fetch(API_BASE + "/verify/math", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, answer }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || "API returned " + response.status);
+    }
+
+    renderMath(await response.json());
+    statusEl.textContent = "";
+  } catch (err) {
+    showError(
+      "Could not verify this math answer. Start the TruthLens API with " +
+        "`uvicorn api:app --port 8000` from the TruthLensv2 directory. (" +
+        err.message + ")"
+    );
+  } finally {
+    btnEl.disabled = false;
+  }
+}
+
+function renderMath(result) {
+  const card = document.createElement("article");
+  card.className = "math-card math-" + result.verdict;
+
+  const title = document.createElement("div");
+  title.className = "math-result-head";
+  const heading = document.createElement("h2");
+  heading.textContent = "Independent math verification";
+  const badge = document.createElement("span");
+  badge.className = "badge math-badge-" + result.verdict;
+  badge.textContent = result.verdict.replace(/_/g, " ");
+  title.append(heading, badge);
+  card.appendChild(title);
+
+  appendMathField(card, "Original question", result.original_question);
+  appendMathField(card, "LLM answer", result.llm_answer);
+  appendMathField(
+    card,
+    "Extracted final answer",
+    result.original_answer || "No final numeric answer extracted"
+  );
+  appendMathField(
+    card,
+    "Question-derived expression",
+    result.extracted_expression || "Not reconstructed"
+  );
+  appendMathField(
+    card,
+    "Independently computed result",
+    result.computed_result || "Not computed"
+  );
+  appendMathField(
+    card,
+    "Conclusive",
+    result.is_conclusive ? "Yes" : "No — unable to verify"
+  );
+  appendMathField(card, "Explanation", result.explanation);
+  resultsEl.appendChild(card);
+}
+
+function appendMathField(container, label, value) {
+  const field = document.createElement("div");
+  field.className = "math-field";
+  const name = document.createElement("div");
+  name.className = "math-field-label";
+  name.textContent = label;
+  const content = document.createElement("p");
+  content.textContent = value;
+  field.append(name, content);
+  container.appendChild(field);
 }
 
 function render(data) {

@@ -23,27 +23,51 @@
   <main class="wrap">
 
     <section class="panel">
-      <label class="label" for="input-text">
-        LLM-generated response
-      </label>
-      <p class="hint">
-        Paste a full multi-sentence answer. TruthLens decomposes it
-        into atomic claims and verifies each one separately.
-      </p>
+      <div class="mode-selector" role="group" aria-label="Verification mode">
+        <button class="mode-button active" data-mode="facts" type="button"
+          aria-pressed="true">Factual verification</button>
+        <button class="mode-button" data-mode="math" type="button"
+          aria-pressed="false">Math verification</button>
+      </div>
 
-      <textarea id="input-text" rows="7" placeholder="Paste an LLM-generated paragraph here…"></textarea>
+      <div id="factual-input">
+        <label class="label" for="input-text">
+          LLM-generated response
+        </label>
+        <p class="hint">
+          Paste a full multi-sentence answer. TruthLens decomposes it
+          into atomic claims and verifies each one separately.
+        </p>
 
-      <div class="examples">
-        <span class="examples-label">Example inputs:</span>
-        <button class="chip" data-example="1" type="button">
-          1 &middot; Eiffel Tower
-        </button>
-        <button class="chip" data-example="2" type="button">
-          2 &middot; RBI Monetary Policy
-        </button>
-        <button class="chip" data-example="3" type="button">
-          3 &middot; Ola Electric
-        </button>
+        <textarea id="input-text" rows="7" placeholder="Paste an LLM-generated paragraph here…"></textarea>
+
+        <div class="examples">
+          <span class="examples-label">Example inputs:</span>
+          <button class="chip" data-example="1" type="button">
+            1 &middot; Eiffel Tower
+          </button>
+          <button class="chip" data-example="2" type="button">
+            2 &middot; RBI Monetary Policy
+          </button>
+          <button class="chip" data-example="3" type="button">
+            3 &middot; Ola Electric
+          </button>
+        </div>
+      </div>
+
+      <div id="math-input" hidden>
+        <label class="label" for="math-question">Original math question</label>
+        <p class="hint">
+          The verifier reconstructs supported calculations from this question
+          and does not rely on the answer's claimed reasoning.
+        </p>
+        <textarea id="math-question" rows="4"
+          placeholder="Example: Maya has 5 apples and buys 2 more. How many does she have?"></textarea>
+        <label class="label math-answer-label" for="math-answer">
+          LLM-generated answer
+        </label>
+        <textarea id="math-answer" rows="4"
+          placeholder="Paste the complete generated answer here…"></textarea>
       </div>
 
       <div class="actions">

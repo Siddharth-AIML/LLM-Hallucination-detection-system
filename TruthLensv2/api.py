@@ -17,13 +17,15 @@ Run:
     uvicorn api:app --port 8000
 """
 
+import asyncio
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
+from math_verifier import verify_math_answer
 from pipeline import TruthLensPipeline
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,19 @@ app.add_middleware(
 
 class VerifyRequest(BaseModel):
     text: str
+
+
+class MathVerifyRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(min_length=1, max_length=12000)
+
+    @field_validator("question", "answer")
+    @classmethod
+    def require_non_whitespace(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("This field must not be blank.")
+        return value
 
 
 # Loading the pipeline pulls in spaCy, MiniLM and FAISS and
@@ -155,6 +170,29 @@ def verify(request: VerifyRequest):
             ),
         },
     }
+
+
+@app.post("/verify/math")
+async def verify_math(request: MathVerifyRequest):
+    """Independently verify supported arithmetic without using the KB."""
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                verify_math_answer, request.question, request.answer
+            ),
+            timeout=2.0,
+        )
+    except asyncio.TimeoutError as error:
+        logger.warning("Math verification exceeded its 2-second limit")
+        raise HTTPException(
+            status_code=504, detail="Math verification timed out."
+        ) from error
+    except Exception as error:
+        logger.exception("Math verification failed")
+        raise HTTPException(
+            status_code=500, detail="Math verification failed."
+        ) from error
+    return result.to_dict()
 
 
 @app.get("/health")
