@@ -27,6 +27,16 @@ _QUESTION_MATH_CUE = re.compile(
     re.IGNORECASE,
 )
 _QUESTION_NUMBERS = re.compile(r"(?<![\w.])(" + _NUMBER + r")(?![\w.])")
+_PACKED_EQUAL_SHARING = re.compile(
+    r"\b(?:has|have|had|contains?|there are|there were)\s+"
+    r"(?P<dividend>" + _NUMBER + r")\s+(?P<item>[\w-]+)\b"
+    r".{0,160}?\b(?:packs?|distributes?|places?|puts?|splits?|divides?)\s+"
+    r"them\s+equally\s+(?:into|among|between)\s+"
+    r"(?P<divisor>" + _NUMBER + r")\s+"
+    r"(?P<container>boxes?|bags?|groups?|baskets?|containers?|"
+    r"people|friends|students|children|teams|piles|packets?)\b",
+    re.IGNORECASE,
+)
 _FINAL_HASHED_ANSWER = re.compile(
     r"####\s*\$?\s*(" + _NUMBER + r")", re.IGNORECASE
 )
@@ -156,6 +166,23 @@ def _question_expression(question):
                 return None
         return match.group("expression")
 
+    sharing_matches = list(_PACKED_EQUAL_SHARING.finditer(question))
+    if sharing_matches:
+        if len(sharing_matches) != 1:
+            return None
+        match = sharing_matches[0]
+        operands = [
+            match.group("dividend").replace(",", ""),
+            match.group("divisor").replace(",", ""),
+        ]
+        numbers = [
+            value.replace(",", "")
+            for value in _QUESTION_NUMBERS.findall(question)
+        ]
+        if numbers != operands:
+            return None
+        return operands[0] + " / " + operands[1]
+
     number = r"(" + _NUMBER + r")"
     templates = (
         (
@@ -243,7 +270,7 @@ def _question_expression(question):
                 + number
                 + r"\s+[\w-]+\s+(?:(?:are|were|is|was)\s+)?"
                 r"(?:shared|split|divided)\s+equally\s+"
-                r"(?:among|between|by)\s+"
+                r"(?:among|between|by|into)\s+"
                 + number
                 + r"\b",
                 re.I,
@@ -326,18 +353,35 @@ def verify_math_answer(question, answer):
     proposed_sympy = sympy.Rational(proposed.numerator, proposed.denominator)
     correct = sympy.simplify(computed_sympy - proposed_sympy) == 0
     computed_result = _format_number(computed)
-    if correct:
-        verdict = VERIFIED
+    sharing = _PACKED_EQUAL_SHARING.search(question)
+    if sharing:
+        dividend = sharing.group("dividend")
+        divisor = sharing.group("divisor")
+        item = sharing.group("item")
+        container = sharing.group("container")
+        container_singular = re.sub(r"s$", "", container, flags=re.IGNORECASE)
         explanation = (
-            "The question-derived expression " + expression + " evaluates to "
-            + computed_result + ", matching the response's final answer."
+            f"{dividend} {item} divided equally among {divisor} "
+            f"{container} gives {computed_result} {item} per "
+            f"{container_singular}"
+        )
+    elif expression and "/" in expression:
+        dividend, divisor = (part.strip() for part in expression.split("/", 1))
+        explanation = (
+            f"{dividend} divided equally by {divisor} gives {computed_result}"
         )
     else:
-        verdict = INCORRECT
         explanation = (
             "The question-derived expression " + expression + " evaluates to "
-            + computed_result + ", not the response's final answer "
-            + extracted_answer + "."
+            + computed_result
+        )
+    if correct:
+        verdict = VERIFIED
+        explanation += ", matching the response's final answer."
+    else:
+        verdict = INCORRECT
+        explanation += (
+            ", not the response's final answer " + extracted_answer + "."
         )
 
     return MathVerificationResult(

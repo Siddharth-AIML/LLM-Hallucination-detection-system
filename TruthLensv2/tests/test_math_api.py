@@ -54,6 +54,14 @@ class MathApiTests(unittest.TestCase):
         self.assertEqual(response.json()["input_text"], "A factual claim.")
         self.assertEqual(response.json()["claims"], [])
 
+    def test_existing_demo_ui_is_still_served(self):
+        page = self.client.get("/")
+        script = self.client.get("/script.js")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Math verification", page.text)
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("async function verifyMath()", script.text)
+
 
 if __name__ == "__main__":
     unittest.main()

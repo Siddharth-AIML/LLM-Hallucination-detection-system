@@ -50,6 +50,62 @@ class MathVerifierTests(unittest.TestCase):
         self.assertEqual(result.verdict, "VERIFIED")
         self.assertEqual(result.computed_result, "4")
 
+    def test_packed_equal_sharing_rejects_wrong_answer(self):
+        result = verify_math_answer(
+            "A shop has 24 chocolates. The shopkeeper packs them equally "
+            "into 6 boxes. How many chocolates are in each box?",
+            "There are 24 chocolates and 6 boxes. Dividing 24 by 6 gives "
+            "5 chocolates per box. Therefore, each box contains 5 chocolates.",
+        )
+        self.assertEqual(result.verdict, "INCORRECT")
+        self.assertEqual(result.original_answer, "5")
+        self.assertEqual(result.extracted_expression, "24 / 6")
+        self.assertEqual(result.computed_result, "4")
+        self.assertIn(
+            "24 chocolates divided equally among 6 boxes gives 4 chocolates per box",
+            result.explanation,
+        )
+
+    def test_packed_equal_sharing_accepts_correct_answer(self):
+        result = verify_math_answer(
+            "A shop has 24 chocolates. The shopkeeper packs them equally "
+            "into 6 boxes. How many chocolates are in each box?",
+            "Each box contains 4 chocolates.",
+        )
+        self.assertEqual(result.verdict, "VERIFIED")
+        self.assertEqual(result.original_answer, "4")
+        self.assertEqual(result.extracted_expression, "24 / 6")
+        self.assertEqual(result.computed_result, "4")
+
+    def test_misleading_calculation_does_not_override_final_answer(self):
+        result = verify_math_answer(
+            "A shop has 24 chocolates. The shopkeeper packs them equally "
+            "into 6 boxes. How many chocolates are in each box?",
+            "Dividing 24 by 6 gives 4. Therefore, each box contains 5 chocolates.",
+        )
+        self.assertEqual(result.verdict, "INCORRECT")
+        self.assertEqual(result.original_answer, "5")
+        self.assertEqual(result.extracted_expression, "24 / 6")
+        self.assertEqual(result.computed_result, "4")
+
+    def test_unequal_packing_is_inconclusive(self):
+        result = verify_math_answer(
+            "A shop has 24 chocolates. The shopkeeper packs them into 6 boxes. "
+            "How many chocolates are in each box?",
+            "Each box contains 4 chocolates.",
+        )
+        self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
+        self.assertFalse(result.is_conclusive)
+
+    def test_ambiguous_equal_sharing_with_extra_quantity_is_inconclusive(self):
+        result = verify_math_answer(
+            "A shop has 24 chocolates and 12 candies. The shopkeeper packs "
+            "them equally into 6 boxes. How many chocolates are in each box?",
+            "Each box contains 4 chocolates.",
+        )
+        self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
+        self.assertFalse(result.is_conclusive)
+
     def test_ambiguous_question_is_inconclusive(self):
         result = verify_math_answer(
             "A train travels for some time at a changing speed. How far?",
