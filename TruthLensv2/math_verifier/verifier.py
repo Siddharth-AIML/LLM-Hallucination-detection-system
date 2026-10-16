@@ -37,6 +37,23 @@ _PACKED_EQUAL_SHARING = re.compile(
     r"people|friends|students|children|teams|piles|packets?)\b",
     re.IGNORECASE,
 )
+_ADD_MORE_ITEMS = re.compile(
+    r"\b(?:has|have|had|contains?)\s+"
+    r"(?P<left>" + _NUMBER + r")\s+(?P<item>[\w-]+)\b"
+    r".{0,120}?\b(?:you\s+)?add(?:s|ed)?\s+"
+    r"(?P<right>" + _NUMBER + r")\s+(?:more\s+)?(?P=item)\b",
+    re.IGNORECASE,
+)
+_ARITHMETIC_ASSERTION = re.compile(
+    r"(?<![\w.])(?P<expression>-?"
+    + _NUMBER
+    + r"(?:\s*[+*/-]\s*-?"
+    + _NUMBER
+    + r"){1,8})\s*=\s*(?P<result>-?"
+    + _NUMBER
+    + r")(?![\w.])"
+)
+_ARITHMETIC_TOKEN = re.compile(r"\d+(?:\.\d+)?|[+*/-]")
 _FINAL_HASHED_ANSWER = re.compile(
     r"####\s*\$?\s*(" + _NUMBER + r")", re.IGNORECASE
 )
@@ -81,15 +98,29 @@ def _format_number(value):
 
 
 def _extract_answer(answer):
-    for pattern in (
-        _FINAL_HASHED_ANSWER,
-        _LABELED_ANSWER,
-        _EQUATION_RESULT,
-        _ENDING_NUMBER,
-    ):
-        matches = list(pattern.finditer(answer))
-        if matches:
-            return matches[-1].group(1)
+    hashed_matches = list(_FINAL_HASHED_ANSWER.finditer(answer))
+    if hashed_matches:
+        return hashed_matches[-1].group(1)
+
+    final_labels = list(
+        re.finditer(
+            r"\bfinal\s+(?:numeric\s+)?answer\s*(?:is|:|=)\s*\$?\s*("
+            + _NUMBER
+            + r")",
+            answer,
+            re.IGNORECASE,
+        )
+    )
+    if final_labels:
+        return final_labels[-1].group(1)
+
+    matches = [
+        match
+        for pattern in (_LABELED_ANSWER, _EQUATION_RESULT, _ENDING_NUMBER)
+        for match in pattern.finditer(answer)
+    ]
+    if matches:
+        return max(matches, key=lambda match: match.start()).group(1)
     return None
 
 
@@ -139,6 +170,31 @@ def _evaluate(expression):
     return _ArithmeticEvaluator().visit(tree)
 
 
+def _same_expression(left, right):
+    left_tokens = _ARITHMETIC_TOKEN.findall(left.replace(",", ""))
+    right_tokens = _ARITHMETIC_TOKEN.findall(right.replace(",", ""))
+    return (
+        "".join(left_tokens) == re.sub(r"[\s,]", "", left)
+        and "".join(right_tokens) == re.sub(r"[\s,]", "", right)
+        and left_tokens == right_tokens
+    )
+
+
+def _incorrect_question_calculation(answer, expression):
+    for match in _ARITHMETIC_ASSERTION.finditer(answer):
+        claimed_expression = match.group("expression")
+        if not _same_expression(claimed_expression, expression):
+            continue
+        try:
+            actual = _evaluate(claimed_expression)
+            claimed = _parse_number(match.group("result"))
+        except (ArithmeticError, SyntaxError, ValueError, ZeroDivisionError):
+            continue
+        if actual != claimed:
+            return claimed_expression + " = " + match.group("result")
+    return None
+
+
 def _question_expression(question):
     matches = list(_QUESTION_EXPRESSION.finditer(question))
     if matches:
@@ -182,6 +238,23 @@ def _question_expression(question):
         if numbers != operands:
             return None
         return operands[0] + " / " + operands[1]
+
+    addition_matches = list(_ADD_MORE_ITEMS.finditer(question))
+    if addition_matches:
+        if len(addition_matches) != 1:
+            return None
+        match = addition_matches[0]
+        operands = [
+            match.group("left").replace(",", ""),
+            match.group("right").replace(",", ""),
+        ]
+        numbers = [
+            value.replace(",", "")
+            for value in _QUESTION_NUMBERS.findall(question)
+        ]
+        if numbers != operands:
+            return None
+        return operands[0] + " + " + operands[1]
 
     number = r"(" + _NUMBER + r")"
     templates = (
@@ -353,6 +426,7 @@ def verify_math_answer(question, answer):
     proposed_sympy = sympy.Rational(proposed.numerator, proposed.denominator)
     correct = sympy.simplify(computed_sympy - proposed_sympy) == 0
     computed_result = _format_number(computed)
+    incorrect_calculation = _incorrect_question_calculation(answer, expression)
     sharing = _PACKED_EQUAL_SHARING.search(question)
     if sharing:
         dividend = sharing.group("dividend")
@@ -375,7 +449,22 @@ def verify_math_answer(question, answer):
             "The question-derived expression " + expression + " evaluates to "
             + computed_result
         )
-    if correct:
+    if incorrect_calculation:
+        verdict = INCORRECT
+        if correct:
+            explanation = (
+                f"The final answer {extracted_answer} matches the "
+                f"independently computed result {computed_result}, but the "
+                f"intermediate calculation {incorrect_calculation} is "
+                "incorrect."
+            )
+        else:
+            explanation += (
+                f", not the response's final answer {extracted_answer}; "
+                f"the intermediate calculation {incorrect_calculation} is "
+                "also incorrect."
+            )
+    elif correct:
         verdict = VERIFIED
         explanation += ", matching the response's final answer."
     else:

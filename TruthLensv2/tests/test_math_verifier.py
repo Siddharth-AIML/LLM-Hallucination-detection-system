@@ -33,6 +33,62 @@ class MathVerifierTests(unittest.TestCase):
         self.assertEqual(result.extracted_expression, "5 + 2")
         self.assertEqual(result.computed_result, "7")
 
+    def test_add_more_word_problem_with_correct_reasoning(self):
+        result = verify_math_answer(
+            "A basket contains 5 apples. You add 3 more apples. "
+            "How many apples are there?",
+            "5 + 3 = 8, so there are 8 apples in total.",
+        )
+        self.assertEqual(result.verdict, "VERIFIED")
+        self.assertEqual(result.extracted_expression, "5 + 3")
+        self.assertEqual(result.computed_result, "8")
+        self.assertEqual(result.original_answer, "8")
+
+    def test_false_intermediate_arithmetic_is_incorrect(self):
+        result = verify_math_answer(
+            "A basket contains 5 apples. You add 3 more apples. "
+            "How many apples are there?",
+            "5 + 3 = 9, so there are 8 apples in total.",
+        )
+        self.assertEqual(result.verdict, "INCORRECT")
+        self.assertEqual(result.extracted_expression, "5 + 3")
+        self.assertEqual(result.computed_result, "8")
+        self.assertEqual(result.original_answer, "8")
+        self.assertIn(
+            "final answer 8 matches the independently computed result 8",
+            result.explanation,
+        )
+        self.assertIn("intermediate calculation 5 + 3 = 9 is incorrect", result.explanation)
+
+    def test_wrong_final_answer_is_incorrect(self):
+        result = verify_math_answer(
+            "A basket contains 5 apples. You add 3 more apples. "
+            "How many apples are there?",
+            "5 + 3 = 8, so there are 9 apples in total.",
+        )
+        self.assertEqual(result.verdict, "INCORRECT")
+        self.assertEqual(result.original_answer, "9")
+        self.assertEqual(result.computed_result, "8")
+
+    def test_irrelevant_reasoning_numbers_do_not_override_final_answer(self):
+        result = verify_math_answer(
+            "A basket contains 5 apples. You add 3 more apples. "
+            "How many apples are there?",
+            "There are 5 apples initially and 3 more are added. "
+            "The final answer is 8 apples; 2 is unrelated.",
+        )
+        self.assertEqual(result.verdict, "VERIFIED")
+        self.assertEqual(result.original_answer, "8")
+
+    def test_ambiguous_addition_word_problem_is_inconclusive(self):
+        result = verify_math_answer(
+            "A basket contains 5 apples and 2 oranges. You add 3 more. "
+            "How many apples are there?",
+            "There are 8 apples.",
+        )
+        self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
+        self.assertFalse(result.is_conclusive)
+
     def test_correct_arithmetic_with_wrong_operands_is_rejected(self):
         result = verify_math_answer(
             "There are 3 bags with 4 apples each. How many apples?",
