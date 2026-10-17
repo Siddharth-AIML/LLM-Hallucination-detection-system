@@ -55,6 +55,8 @@ const factualInputEl = document.getElementById("factual-input");
 const mathInputEl = document.getElementById("math-input");
 const mathQuestionEl = document.getElementById("math-question");
 const mathAnswerEl = document.getElementById("math-answer");
+const codeInputEl = document.getElementById("code-input");
+const codeTextEl = document.getElementById("code-text");
 let activeMode = "facts";
 
 document.querySelectorAll(".chip").forEach((chip) => {
@@ -71,6 +73,8 @@ document.querySelectorAll(".mode-button").forEach((button) => {
 btnEl.addEventListener("click", () => {
   if (activeMode === "math") {
     verifyMath();
+  } else if (activeMode === "code") {
+    verifyCode();
   } else {
     verify();
   }
@@ -80,7 +84,9 @@ function setMode(mode) {
   activeMode = mode;
   factualInputEl.hidden = mode !== "facts";
   mathInputEl.hidden = mode !== "math";
-  btnEl.textContent = mode === "math" ? "Verify math" : "Verify";
+  codeInputEl.hidden = mode !== "code";
+  btnEl.textContent =
+    mode === "math" ? "Verify math" : mode === "code" ? "Check code" : "Verify";
   statusEl.textContent = "";
   summaryEl.hidden = true;
   resultsEl.innerHTML = "";
@@ -431,4 +437,122 @@ function showError(message) {
   statusEl.textContent = "";
   resultsEl.innerHTML =
     '<div class="error">' + escapeHtml(message) + "</div>";
+}
+
+
+// ---- Code check -------------------------------------------------------
+// Separate server from the claim pipeline: code_verifier on 8001, or 8002
+// when 8001 was already taken. The first one that answers /health is used.
+const CODE_API_CANDIDATES = [
+  "http://127.0.0.1:8001",
+  "http://127.0.0.1:8002",
+];
+let codeApiBase = null;
+
+async function findCodeApi() {
+  if (codeApiBase) return codeApiBase;
+  for (const base of CODE_API_CANDIDATES) {
+    try {
+      const res = await fetch(base + "/health");
+      if (res.ok && (await res.json()).status === "ok") {
+        codeApiBase = base;
+        return base;
+      }
+    } catch (err) {
+      // not listening here; try the next port
+    }
+  }
+  return null;
+}
+
+async function verifyCode() {
+  const text = codeTextEl.value.trim();
+
+  resultsEl.innerHTML = "";
+  summaryEl.hidden = true;
+
+  if (!text) {
+    showError("Paste an LLM answer that contains code to check.");
+    return;
+  }
+
+  btnEl.disabled = true;
+  statusEl.innerHTML =
+    '<span class="spinner"></span>Checking imports and function calls…';
+
+  try {
+    const base = await findCodeApi();
+    if (!base) {
+      throw new Error("code-check server not found on 8001 or 8002");
+    }
+    const response = await fetch(base + "/check-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      throw new Error("API returned " + response.status);
+    }
+    renderCode(await response.json());
+    statusEl.textContent = "";
+  } catch (err) {
+    codeApiBase = null;
+    showError(
+      "Could not reach the code-check server. Start it with " +
+        "`python -m code_verifier.server` from the TruthLensv2 " +
+        "directory. (" + err.message + ")"
+    );
+  } finally {
+    btnEl.disabled = false;
+  }
+}
+
+function renderCode(data) {
+  const counts = data.summary || {};
+  const heading = document.createElement("h2");
+  heading.textContent =
+    "Code check summary — " + data.findings.length + " findings in " +
+    data.blocks_found + " code block" + (data.blocks_found === 1 ? "" : "s");
+  const tally = document.createElement("div");
+  tally.className = "tally";
+  Object.keys(counts).forEach((verdict) => {
+    const item = document.createElement("span");
+    item.className = "tally-item b-" + verdict;
+    item.textContent = (VERDICT_LABEL[verdict] || verdict) + ": " + counts[verdict];
+    tally.appendChild(item);
+  });
+  summaryEl.replaceChildren(heading, tally);
+  summaryEl.hidden = false;
+
+  if (!data.findings.length) {
+    showError("No Python code blocks were found in this text.");
+    return;
+  }
+
+  const list = document.createElement("div");
+  list.className = "code-findings";
+  data.findings.forEach((f) => {
+    const row = document.createElement("div");
+    row.className = "code-row v-" + f.verdict;
+
+    const item = document.createElement("code");
+    item.className = "code-item";
+    item.textContent = f.item;
+
+    const kind = document.createElement("span");
+    kind.className = "code-kind";
+    kind.textContent = f.kind + " · block " + f.block;
+
+    const badge = document.createElement("span");
+    badge.className = "badge b-" + f.verdict;
+    badge.textContent = VERDICT_LABEL[f.verdict] || f.verdict;
+
+    const reason = document.createElement("p");
+    reason.className = "code-reason";
+    reason.textContent = f.reason;
+
+    row.append(item, kind, badge, reason);
+    list.appendChild(row);
+  });
+  resultsEl.appendChild(list);
 }

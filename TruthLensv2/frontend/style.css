@@ -458,3 +458,32 @@ details.evidence[open] > summary::before {
   font-size: 14px;
   overflow-wrap: anywhere;
 }
+
+/* Code check */
+.code-findings { display: flex; flex-direction: column; gap: 8px; }
+
+.code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--insufficient);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.code-row.v-SUPPORTED { border-left-color: var(--supported); }
+.code-row.v-CONTRADICTED { border-left-color: var(--contradicted); }
+
+.code-item { font-weight: 700; word-break: break-all; }
+.code-kind { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+.code-reason {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  word-break: break-word;
+}

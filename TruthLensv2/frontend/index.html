@@ -28,6 +28,8 @@
           aria-pressed="true">Factual verification</button>
         <button class="mode-button" data-mode="math" type="button"
           aria-pressed="false">Math verification</button>
+        <button class="mode-button" data-mode="code" type="button"
+          aria-pressed="false">Code check</button>
       </div>
 
       <div id="factual-input">
@@ -68,6 +70,17 @@
         </label>
         <textarea id="math-answer" rows="4"
           placeholder="Paste the complete generated answer here…"></textarea>
+      </div>
+
+      <div id="code-input" hidden>
+        <label class="label" for="code-text">LLM answer containing code</label>
+        <p class="hint">
+          Checks that imported packages and the functions called on them
+          really exist. Code is parsed only, never run. Uses the separate
+          code-check server (port 8001, or 8002 if 8001 was taken).
+        </p>
+        <textarea id="code-text" rows="9"
+          placeholder="Paste an LLM answer with fenced code blocks here…"></textarea>
       </div>
 
       <div class="actions">
