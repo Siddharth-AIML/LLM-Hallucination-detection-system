@@ -1,6 +1,6 @@
-**\# TruthLens V2**
+# TruthLens V2
 
-**\## LLM Hallucination Detection and Mitigation System**
+## LLM Hallucination Detection and Mitigation System
 
 TruthLens V2 is a **\*\*Responsible AI / Trustworthy AI\*\*** system
 designed to detect, verify, and mitigate factual hallucinations in Large
