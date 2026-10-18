@@ -1,12 +1,18 @@
+
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <title>TruthLens V2 — Hallucination Detection Demo</title>
-  <link rel="icon"
-    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128269;</text></svg>">
+
+  <link
+    rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128269;</text></svg>"
+  >
+
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -14,90 +20,347 @@
 
   <header class="masthead">
     <h1>Final Year Project <span class="version">27P31</span></h1>
+
     <p class="tagline">
-      Claim-level hallucination detection &mdash; every claim is
-      verified independently against a news-derived Knowledge Base.
+      Claim-level hallucination detection and contextual reliability
+      auditing with conversation memory, refined prompts, and targeted mitigation.
     </p>
   </header>
 
   <main class="wrap">
 
     <section class="panel">
-      <div class="mode-selector" role="group" aria-label="Verification mode">
-        <button class="mode-button active" data-mode="facts" type="button"
-          aria-pressed="true">Factual verification</button>
-        <button class="mode-button" data-mode="math" type="button"
-          aria-pressed="false">Math verification</button>
-        <button class="mode-button" data-mode="code" type="button"
-          aria-pressed="false">Code check</button>
+
+      <!-- VERIFICATION MODE SELECTOR -->
+      <div
+        class="mode-selector"
+        role="group"
+        aria-label="Verification mode"
+      >
+        <button
+          class="mode-button active"
+          data-mode="facts"
+          type="button"
+          aria-pressed="true"
+        >
+          Factual verification
+        </button>
+
+        <button
+          class="mode-button"
+          data-mode="math"
+          type="button"
+          aria-pressed="false"
+        >
+          Math verification
+        </button>
+
+        <button
+          class="mode-button"
+          data-mode="code"
+          type="button"
+          aria-pressed="false"
+        >
+          Code check
+        </button>
+
+        <button
+          class="mode-button"
+          data-mode="context"
+          type="button"
+          aria-pressed="false"
+        >
+          Contextual Auditing
+        </button>
+
+        <button
+          class="mode-button"
+          data-mode="memory"
+          type="button"
+          aria-pressed="false"
+        >
+          Context Memory Analysis
+        </button>
       </div>
 
+      <!-- 1. FACTUAL VERIFICATION -->
       <div id="factual-input">
+
         <label class="label" for="input-text">
           LLM-generated response
         </label>
+
         <p class="hint">
-          Paste a full multi-sentence answer. TruthLens decomposes it
-          into atomic claims and verifies each one separately.
+          Paste a full multi-sentence answer. TruthLens extracts
+          atomic claims and verifies each claim independently
+          against the Knowledge Base.
         </p>
 
-        <textarea id="input-text" rows="7" placeholder="Paste an LLM-generated paragraph here…"></textarea>
+        <textarea
+          id="input-text"
+          rows="7"
+          placeholder="Paste an LLM-generated paragraph here…"
+        ></textarea>
 
         <div class="examples">
           <span class="examples-label">Example inputs:</span>
+
           <button class="chip" data-example="1" type="button">
-            1 &middot; Eiffel Tower
+            1 · Eiffel Tower
           </button>
+
           <button class="chip" data-example="2" type="button">
-            2 &middot; RBI Monetary Policy
+            2 · RBI Monetary Policy
           </button>
+
           <button class="chip" data-example="3" type="button">
-            3 &middot; Ola Electric
+            3 · Ola Electric
           </button>
         </div>
+
       </div>
 
+      <!-- 2. MATH VERIFICATION -->
       <div id="math-input" hidden>
-        <label class="label" for="math-question">Original math question</label>
+
+        <label class="label" for="math-question">
+          Original math question
+        </label>
+
         <p class="hint">
-          The verifier reconstructs supported calculations from this question
-          and does not rely on the answer's claimed reasoning.
+          The verifier independently reconstructs supported
+          calculations from the original question.
         </p>
-        <textarea id="math-question" rows="4"
-          placeholder="Example: Maya has 5 apples and buys 2 more. How many does she have?"></textarea>
+
+        <textarea
+          id="math-question"
+          rows="4"
+          placeholder="Example: Maya has 5 apples and buys 2 more. How many does she have?"
+        ></textarea>
+
         <label class="label math-answer-label" for="math-answer">
           LLM-generated answer
         </label>
-        <textarea id="math-answer" rows="4"
-          placeholder="Paste the complete generated answer here…"></textarea>
+
+        <textarea
+          id="math-answer"
+          rows="4"
+          placeholder="Paste the complete generated answer here…"
+        ></textarea>
+
       </div>
 
+      <!-- 3. CODE CHECK -->
       <div id="code-input" hidden>
-        <label class="label" for="code-text">LLM answer containing code</label>
+
+        <label class="label" for="code-text">
+          LLM answer containing code
+        </label>
+
         <p class="hint">
-          Checks that imported packages and the functions called on them
-          really exist. Code is parsed only, never run. Uses the separate
-          code-check server (port 8001, or 8002 if 8001 was taken).
+          Checks imports, packages, and function calls.
+          Code is parsed only, never executed. Uses the separate
+          code-check server on port 8001 or 8002.
         </p>
-        <textarea id="code-text" rows="9"
-          placeholder="Paste an LLM answer with fenced code blocks here…"></textarea>
+
+        <textarea
+          id="code-text"
+          rows="9"
+          placeholder="Paste an LLM answer with fenced code blocks here…"
+        ></textarea>
+
       </div>
 
+      <!-- 4. UNIFIED CONTEXTUAL RELIABILITY AUDIT -->
+      <div id="context-input" hidden>
+
+        <h2>Unified Contextual Reliability Audit</h2>
+
+        <p class="hint">
+          Audits whether an answer follows the reference context,
+          current question, conversation history, and applicable
+          instructions. Context memory analysis checks explicit
+          user goals, preferences, constraints, and decisions.
+          Targeted mitigation can generate a refined prompt,
+          propose a corrected answer, and independently re-audit it.
+        </p>
+
+        <label class="label" for="context-question">
+          Original question
+        </label>
+
+        <textarea
+          id="context-question"
+          rows="3"
+          placeholder="What did the user ask?"
+        ></textarea>
+
+        <label class="label math-answer-label" for="context-answer">
+          LLM-generated answer
+        </label>
+
+        <textarea
+          id="context-answer"
+          rows="5"
+          placeholder="Paste the answer you want to audit…"
+        ></textarea>
+
+        <label class="label math-answer-label" for="context-source">
+          Reference context
+        </label>
+
+        <p class="hint">
+          Optional: provide source text or facts that the answer
+          should follow. Leave blank if no reference context is available.
+        </p>
+
+        <textarea
+          id="context-source"
+          rows="4"
+          placeholder="Provide the source text or facts the answer should follow…"
+        ></textarea>
+
+        <label class="label math-answer-label" for="context-history">
+          Conversation history (optional)
+        </label>
+
+        <p class="hint">
+          Include relevant earlier user and assistant messages.
+          Only the history supplied here is analyzed; previous
+          conversations are not automatically retrieved.
+        </p>
+
+        <textarea
+          id="context-history"
+          rows="6"
+          placeholder="USER: I want to prioritize GATE preparation until I finish my syllabus.
+ASSISTANT: We will focus on GATE first."
+        ></textarea>
+
+        <label class="label math-answer-label" for="context-instructions">
+          Instructions (optional)
+        </label>
+
+        <textarea
+          id="context-instructions"
+          rows="3"
+          placeholder="Instructions the answer should follow…"
+        ></textarea>
+
+        <div class="mitigation-information">
+          <h3>Targeted Mitigation Workflow</h3>
+
+          <p class="hint">
+            After the initial audit, request a refined prompt for
+            the original LLM and a proposed corrected answer.
+            TruthLens then independently re-audits the proposed
+            answer and reports any remaining failures.
+          </p>
+
+          <p class="hint">
+            The refined prompt and corrected answer are separate outputs.
+            Generating a prompt does not automatically submit it to
+            another LLM. Review all proposed changes before using them.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- 5. STANDALONE CONTEXT MEMORY ANALYSIS -->
+      <div id="memory-input" hidden>
+
+        <h2>Context Memory Analysis</h2>
+
+        <p class="hint">
+          Extracts explicit user goals, preferences, constraints,
+          decisions, and corrections from the supplied history,
+          then checks whether the answer conflicts with those statements.
+        </p>
+
+        <label class="label" for="memory-question">
+          Current question
+        </label>
+
+        <textarea
+          id="memory-question"
+          rows="3"
+          placeholder="What is the user asking now?"
+        ></textarea>
+
+        <label class="label math-answer-label" for="memory-answer">
+          LLM-generated answer
+        </label>
+
+        <textarea
+          id="memory-answer"
+          rows="5"
+          placeholder="Paste the answer to evaluate against conversation memory…"
+        ></textarea>
+
+        <label class="label math-answer-label" for="memory-history">
+          Conversation history
+        </label>
+
+        <textarea
+          id="memory-history"
+          rows="8"
+          placeholder="USER: I want to prioritize GATE preparation.
+ASSISTANT: We will focus on GATE first."
+        ></textarea>
+
+        <label class="label math-answer-label" for="memory-instructions">
+          Instructions (optional)
+        </label>
+
+        <textarea
+          id="memory-instructions"
+          rows="3"
+          placeholder="Any additional instructions for this analysis…"
+        ></textarea>
+
+        <p class="hint">
+          This mode analyzes only the history supplied here.
+          It does not automatically retrieve previous ChatGPT conversations.
+        </p>
+
+      </div>
+
+      <!-- SHARED ACTIONS -->
       <div class="actions">
+
         <button id="verify-btn" class="primary" type="button">
           Verify
         </button>
-        <span id="status" class="status"></span>
+
+        <span
+          id="status"
+          class="status"
+          role="status"
+          aria-live="polite"
+        ></span>
+
       </div>
+
     </section>
 
-    <section id="summary" class="summary" hidden></section>
+    <!-- SHARED SUMMARY -->
+    <section
+      id="summary"
+      class="summary"
+      aria-live="polite"
+      hidden
+    ></section>
 
-    <section id="results" class="results"></section>
+    <!-- SHARED RESULTS: RENDERED BY script.js -->
+    <section
+      id="results"
+      class="results"
+      aria-live="polite"
+    ></section>
 
   </main>
 
   <script src="script.js"></script>
-</body>
 
+</body>
 </html>
