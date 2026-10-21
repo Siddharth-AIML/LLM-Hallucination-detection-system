@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -60,16 +61,22 @@ def _ask_groq(client, model, question):
 
 
 def _metrics(rows):
+    evaluated = [
+        row
+        for row in rows
+        if row["failure"] == "" and row["ground_truth"] is not None
+    ]
     true_positive = sum(
-        row["baseline_incorrect"] and row["detected_incorrect"] for row in rows
+        row["baseline_incorrect"] and row["detected_incorrect"]
+        for row in evaluated
     )
     false_positive = sum(
         not row["baseline_incorrect"] and row["detected_incorrect"]
-        for row in rows
+        for row in evaluated
     )
     false_negative = sum(
         row["baseline_incorrect"] and not row["detected_incorrect"]
-        for row in rows
+        for row in evaluated
     )
     precision = (
         true_positive / (true_positive + false_positive)
@@ -86,11 +93,7 @@ def _metrics(rows):
         if precision + recall
         else 0.0
     )
-    evaluated = [
-        row
-        for row in rows
-        if row["failure"] == "" and row["ground_truth"] is not None
-    ]
+    successful = [row for row in rows if row["failure"] == ""]
     return {
         "samples": len(rows),
         "evaluated_samples": len(evaluated),
@@ -112,6 +115,43 @@ def _metrics(rows):
             row["verdict"] == "UNABLE_TO_VERIFY" for row in evaluated
         ),
         "execution_failures": sum(bool(row["failure"]) for row in rows),
+        "baseline_answer_extraction_failures": sum(
+            row.get("baseline_extraction_failed", False) for row in successful
+        ),
+        "verifier_answer_extraction_failures": sum(
+            row.get("verifier_extraction_failed", False) for row in successful
+        ),
+        "model_calls": sum(row.get("model_calls", 0) for row in rows),
+        "baseline_model_calls": sum(
+            row.get("baseline_model_calls", 0) for row in rows
+        ),
+        "verification_model_calls": sum(
+            row.get("verification_model_calls", 0) for row in successful
+        ),
+        "mean_latency_ms": (
+            sum(row.get("latency_ms", 0.0) for row in successful)
+            / len(successful)
+            if successful
+            else 0.0
+        ),
+        "mean_baseline_latency_ms": (
+            sum(row.get("baseline_latency_ms", 0.0) for row in successful)
+            / len(successful)
+            if successful
+            else 0.0
+        ),
+        "mean_verification_latency_ms": (
+            sum(row.get("verification_latency_ms", 0.0) for row in successful)
+            / len(successful)
+            if successful
+            else 0.0
+        ),
+        "abstention_rate": (
+            sum(row["verdict"] == "UNABLE_TO_VERIFY" for row in evaluated)
+            / len(evaluated)
+            if evaluated
+            else 0.0
+        ),
         "detection_counts": {
             "true_positive": true_positive,
             "false_positive": false_positive,
@@ -134,7 +174,7 @@ def run_benchmark(split, limit, model, output):
     if not api_key:
         raise RuntimeError("Set GROQ_API_KEY to run the LLM benchmark.")
 
-    client = Groq(api_key=api_key)
+    client = Groq(api_key=api_key, timeout=30.0, max_retries=0)
     dataset = load_dataset(
         "openai/gsm8k", "main", split=split, streaming=True
     )
@@ -159,21 +199,47 @@ def run_benchmark(split, limit, model, output):
             "baseline_incorrect": False,
             "detected_incorrect": False,
             "after_verification_correct": False,
+            "baseline_extraction_failed": False,
+            "verifier_extraction_failed": False,
+            "model_calls": 0,
+            "latency_ms": 0.0,
+            "baseline_model_calls": 0,
+            "verification_model_calls": 0,
+            "baseline_latency_ms": 0.0,
+            "verification_latency_ms": 0.0,
             "failure": "",
         }
         try:
+            baseline_started = time.perf_counter()
+            record["baseline_model_calls"] = 1
+            record["model_calls"] = 1
             llm_answer = _ask_groq(client, model, question)
-            result = verify_math_answer(question, llm_answer)
-            baseline = _numeric_answer(result.original_answer or "")
+            baseline_latency = round(
+                (time.perf_counter() - baseline_started) * 1000, 2
+            )
+            record["llm_answer"] = llm_answer
+            baseline = _numeric_answer(llm_answer)
             baseline_correct = (
                 baseline is not None
                 and expected is not None
                 and baseline == expected
             )
+            record.update(
+                {
+                    "baseline_correct": baseline_correct,
+                    "baseline_incorrect": (
+                        expected is not None and not baseline_correct
+                    ),
+                    "baseline_extraction_failed": baseline is None,
+                    "baseline_latency_ms": baseline_latency,
+                }
+            )
+            result = verify_math_answer(question, llm_answer)
             corrected_answer = (
                 result.computed_result
                 if result.verdict == "INCORRECT"
-                else (result.original_answer or "")
+                and result.computed_result is not None
+                else (baseline if baseline is not None else "")
             )
             after = _numeric_answer(corrected_answer)
             record.update(
@@ -186,6 +252,10 @@ def run_benchmark(split, limit, model, output):
                     "explanation": result.explanation,
                     "corrected_answer": corrected_answer,
                     "baseline_correct": baseline_correct,
+                    "baseline_extraction_failed": baseline is None,
+                    "verifier_extraction_failed": (
+                        result.original_answer is None
+                    ),
                     "baseline_incorrect": (
                         expected is not None
                         and not baseline_correct
@@ -196,6 +266,12 @@ def run_benchmark(split, limit, model, output):
                         and expected is not None
                         and after == expected
                     ),
+                    "model_calls": 1 + result.model_calls,
+                    "latency_ms": result.latency_ms,
+                    "baseline_model_calls": 1,
+                    "verification_model_calls": result.model_calls,
+                    "baseline_latency_ms": baseline_latency,
+                    "verification_latency_ms": result.latency_ms,
                 }
             )
         except Exception as error:
@@ -210,7 +286,10 @@ def run_benchmark(split, limit, model, output):
         "computed_result", "corrected_answer", "baseline_correct",
         "expression", "verification_status", "explanation",
         "baseline_incorrect", "detected_incorrect",
-        "after_verification_correct", "failure",
+        "after_verification_correct", "baseline_extraction_failed",
+        "verifier_extraction_failed", "model_calls", "latency_ms",
+        "baseline_model_calls", "verification_model_calls",
+        "baseline_latency_ms", "verification_latency_ms", "failure",
     ]
     with output.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -219,9 +298,14 @@ def run_benchmark(split, limit, model, output):
 
     summary = {
         "dataset": "openai/gsm8k",
+        "configuration": "main",
         "split": split,
         "model": model,
         "limit": limit,
+        "streaming": True,
+        "test_split_policy": (
+            "evaluation only; do not tune verifier or model on test results"
+        ),
         "metrics": _metrics(records),
     }
     summary_path = output.with_suffix(".summary.json")

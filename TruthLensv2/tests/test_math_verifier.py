@@ -1,9 +1,28 @@
 import unittest
+from unittest.mock import patch
 
 from math_verifier import verify_math_answer
+from math_verifier.interpreter import InterpretationError
+
+
+class OfflineInterpreter:
+    model_calls = 0
+
+    def interpret(self, _question):
+        if not _question:
+            raise AssertionError("Questions passed to the interpreter are nonblank.")
+        raise InterpretationError("Structured interpretation disabled in test.")
 
 
 class MathVerifierTests(unittest.TestCase):
+    def setUp(self):
+        self.no_model = patch(
+            "math_verifier.verifier.StructuredQuestionInterpreter",
+            OfflineInterpreter,
+        )
+        self.no_model.start()
+        self.addCleanup(self.no_model.stop)
+
     def test_correct_arithmetic(self):
         result = verify_math_answer("What is 2 + 2?", "2 + 2 = 4.")
         self.assertEqual(result.verdict, "VERIFIED")
@@ -161,6 +180,7 @@ class MathVerifierTests(unittest.TestCase):
         )
         self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
         self.assertFalse(result.is_conclusive)
+        self.assertEqual(result.interpreter, "deterministic")
 
     def test_ambiguous_question_is_inconclusive(self):
         result = verify_math_answer(
@@ -188,6 +208,29 @@ class MathVerifierTests(unittest.TestCase):
         result = verify_math_answer(
             "What is 2 + 2?",
             "Add the two numbers to find the result.",
+        )
+        self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
+
+    def test_false_equation_is_reported_even_without_final_answer(self):
+        result = verify_math_answer(
+            "What is 2 + 2?",
+            "2 + 2 = 5; calculation only.",
+        )
+        self.assertEqual(result.verdict, "INCORRECT")
+        self.assertEqual(result.computed_result, "4")
+        self.assertIsNone(result.final_answer_correct)
+
+    def test_unsupported_equation_makes_reasoning_inconclusive(self):
+        result = verify_math_answer(
+            "What is 2 + 2?",
+            "x = 3. The final answer is 4.",
+        )
+        self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
+
+    def test_conflicting_labeled_final_answers_are_inconclusive(self):
+        result = verify_math_answer(
+            "What is 2 + 2?",
+            "The final answer is 4. The final answer is 5.",
         )
         self.assertEqual(result.verdict, "UNABLE_TO_VERIFY")
 
