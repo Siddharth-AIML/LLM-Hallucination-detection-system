@@ -2018,71 +2018,34 @@ FUTURE RETRIEVAL
 
 # 🧮 Independent Math Verification
 
-Math verification is a separate capability; it does not call or alter the
+Math verification is an isolated capability alongside (not inside) the existing
 claim extraction, FAISS + BM25 retrieval, factual verifier, or knowledge
-expansion pipeline. It is served by the existing FastAPI demo and its
-HTML/CSS/JavaScript frontend.
+expansion pipeline. It is exposed through the existing FastAPI demo and its
+current HTML/CSS/JavaScript frontend.
 
-The verifier first handles supported explicit arithmetic and conservative
-word-problem patterns deterministically. For other natural-language problems,
-it can optionally ask a configured Groq model for a structured interpretation
-of the **question only**. The proposed expression is schema-validated, limited
-to allowlisted arithmetic-tree nodes, and checked against quoted numeric
-evidence, operand counts, explicit units, and operation wording before safe
-evaluation. Python `eval()` and `exec()` are never used. SymPy performs exact
-rational evaluation and comparison; explicitly requested decimal rounding is
-applied using exact half-up arithmetic.
-
-The response is checked independently for an extractable final answer and
-endorsed arithmetic assertions. A false calculation can therefore yield
-`INCORRECT` even when the stated final answer is right. Correct arithmetic
-does not validate an unrelated or incorrectly reconstructed question
-expression. Ambiguous, unsupported, low-confidence, malformed, or
-insufficiently grounded interpretations abstain with `UNABLE_TO_VERIFY`.
-
-Supported operations include exact addition, subtraction, multiplication,
-division, bounded integer powers, perfect rational square roots, and selected
-length, mass, time, volume, currency, percentage, and count units. This is not
-a general algebra solver, symbolic equation solver, or proof of a model's
-natural-language understanding. Complex multi-step problems, unsupported
-unit algebra, fractional answers without clear representation, ambiguous
-wording, and arithmetic assertions the checker cannot safely parse may cause
-abstention. A model-proposed interpretation remains a proposal: it is never
-treated as ground truth merely because it executes.
+The verifier reconstructs a limited set of explicit arithmetic expressions and
+simple, unambiguous word-problem operations from the **question**, evaluates
+them with bounded Python arithmetic, and uses SymPy for exact result
+comparison. It never evaluates generated Python or trusts an equation or
+assertion in the model response as evidence. Unsupported, ambiguous, or
+symbolic questions return `UNABLE_TO_VERIFY`; this is intentional. It is not a
+general-purpose algebra or natural-language math solver.
 
 ## Setup and tests
 
-Install the project requirements from the repository root:
+Install the added SymPy dependency along with the project's requirements from
+the repository root:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-The optional structured interpreter requires `GROQ_API_KEY`; configure it as
-an environment variable or in a local `.env` file. `GROQ_MODEL_NAME` selects
-the model (default `openai/gpt-oss-120b`). Deterministic supported problems do
-not require credentials, and unavailable credentials cause unsupported
-problems to abstain rather than to be guessed.
-
-Run the full test suite from `TruthLensv2`:
+Run focused verifier and API tests from `TruthLensv2`:
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
-
-Unit and API tests use offline/mock interpreters and do not make provider calls.
-
-Run the hand-labelled, offline adversarial evaluation without downloading data
-or calling an LLM:
-
-```powershell
-python scripts/evaluate_math_adversarial.py
-```
-
-It reports verdict accuracy, incorrect-answer detection precision/recall/F1,
-unverified cases, and execution failures for the checked-in manually labelled
-fixture. Use `--output results.json` to save the detailed report.
 
 ## API usage
 
@@ -2105,18 +2068,16 @@ Content-Type: application/json
 ```
 
 The response includes `verdict` (`VERIFIED`, `INCORRECT`, or
-`UNABLE_TO_VERIFY`), question-derived `extracted_expression`,
-`computed_result`, exact pre-rounding result, extracted `original_answer`,
-expression tree, sourced quantities, solution trace, reasoning assertions,
-verification coverage, explanation, and `is_conclusive`/
-`verification_status`. The endpoint validates nonblank bounded inputs and
-applies a 10-second request timeout. It does not accept or execute generated
-code or expose provider credentials.
+`UNABLE_TO_VERIFY`), the question-derived `extracted_expression`,
+`computed_result`, the extracted `original_answer`, an explanation, and
+`is_conclusive`/`verification_status`. The route rejects blank or oversized
+inputs and applies a two-second request timeout. It does not run LLM-supplied
+code.
 
-The demo's **Math verification** mode displays the question, LLM answer,
-extracted answer, expression, independent result, verdict, explanation,
-conclusiveness, and structured diagnostics. The factual verification mode
-and its API route remain unchanged.
+The demo's **Math verification** mode displays the original question, LLM
+answer, extracted answer, independently reconstructed expression and result,
+verdict, explanation, and whether verification was conclusive. The factual
+verification mode remains unchanged.
 
 ## GSM8K benchmark (opt-in)
 
@@ -2138,20 +2099,182 @@ Run a bounded test-split evaluation from the `TruthLensv2` directory:
 python scripts/benchmark_gsm8k.py --split test --limit 100 --model openai/gpt-oss-120b
 ```
 
-For development, use `--split train`. To process a complete split, explicitly
-pass `--limit 0`; streaming avoids materializing the full dataset in memory,
-but still makes one model call per example and may incur provider cost or rate
-limits. The script writes per-example inputs, model answers, independent
-baseline extraction, verdicts, expressions/results, post-verification
-corrections, latency, model-call counts, extraction failures, and execution
-failures to CSV, plus summary metrics to JSON.
+For a development run on training data, use `--split train`. To process a
+complete split, explicitly pass `--limit 0`; streaming avoids materializing
+the whole dataset in memory, but this will still make model calls for every
+example and may incur provider cost/rate limits. The script writes per-example
+answers, verdicts, reconstructed expressions/results, corrections, and
+failures to `gsm8k_results.csv`, plus summary metrics to
+`gsm8k_results.summary.json` (or files based on `--output`).
 
-Metrics include baseline and post-verification accuracy, incorrect-answer
-detection precision/recall/F1, abstention rate and count, answer-extraction
-failures, baseline and verifier latency, baseline/verifier/total model-call
-counts, and execution failures.
-Baseline extraction is taken directly from the raw model answer. The
-post-verification policy replaces an answer only when verification returns
-`INCORRECT` and a question-derived computed result is available; abstentions
-leave the baseline answer unchanged. GSM8K was not downloaded or run as part
-of implementation, so no benchmark scores are claimed.
+Reported metrics include baseline and post-verification answer accuracy,
+incorrect-answer detection precision/recall/F1, unverified cases, and
+execution failures. A correction is applied only for `INCORRECT` cases with a
+question-derived calculation; inconclusive cases are left unchanged. GSM8K
+was not downloaded or run as part of implementation, so no benchmark scores
+are claimed here. Coverage on GSM8K is expected to be limited because the
+verifier deliberately abstains on multi-step or ambiguous calculations it
+cannot reconstruct safely.
+
+
+ 
+
+# 🧩 Contextual Hallucination Detection and Prompt Improvement
+
+## Overview
+
+TruthLens V2 includes a contextual hallucination detection and mitigation workflow that evaluates an LLM-generated answer against the question asked, conversation history, and any additional context or instructions provided.
+
+Unlike claim-level factual verification, which focuses on checking claims against external evidence, contextual hallucination detection focuses on whether an answer is consistent with the available conversation context, follows the given instructions, and addresses the user's actual question.
+
+The workflow also supports **refined-prompt generation** to improve the answer when an actionable contextual failure is detected.
+
+## Key Features
+
+- **Context-Aware Auditing:** Evaluates answers using the question, generated answer, conversation history, and optional context or instructions.
+- **Contextual Failure Analysis:** Identifies potential issues such as missing context, contradictions, incorrect interpretation of the question, or failure to follow instructions.
+- **Actionability Assessment:** Determines whether the detected issue requires mitigation rather than automatically rewriting every answer.
+- **Refined-Prompt Generation:** Uses the identified failure and relevant context to construct an improved prompt that guides the LLM toward a more appropriate answer.
+- **Suggested Answer Generation:** Uses the refined prompt to generate a candidate improved answer.
+- **Re-Verification:** Audits the suggested answer again to assess whether the identified contextual issue has been addressed.
+- **Structured Results:** Returns the contextual audit and mitigation outcome for further inspection.
+
+## Contextual Hallucination Detection Workflow
+
+```text
+User Question + LLM Answer
+            |
+            v
+Conversation History, Context
+and Instructions Preparation
+            |
+            v
+     Initial Contextual Audit
+            |
+            v
+      Failure Analysis
+            |
+            v
+ Is Mitigation Actionable?
+        /          \
+      No             Yes
+      |               |
+      v               v
+ Return Audit     Refined-Prompt
+ Findings         Generation
+                       |
+                       v
+                Suggested Answer
+                  Generation
+                       |
+                       v
+                  Re-Verification
+                       |
+                       v
+                Final Audit Result
+```
+
+If no actionable contextual failure is identified, the workflow can return the audit findings without generating a refined prompt or suggested answer. When mitigation is appropriate, the system generates a refined prompt, obtains a candidate answer, and performs another audit.
+
+## Prompt Improvement and Mitigation
+
+Prompt improvement is a mitigation strategy that uses the detected contextual failure to guide the next LLM response.
+
+Instead of simply asking the model to regenerate an answer, the workflow aims to make the prompt more explicit about the original question, relevant conversation history, applicable instructions, and the issue that needs correction.
+
+The prompt-improvement process follows these steps:
+
+1. **Identify the failure:** Determine the contextual issue identified during the initial audit.
+2. **Preserve relevant context:** Retain the question, relevant conversation history, and applicable instructions.
+3. **Refine the prompt:** Explicitly guide the model to correct the identified issue and avoid repeating the same failure.
+4. **Generate a candidate answer:** Submit the refined prompt to the LLM.
+5. **Re-verify the answer:** Run the contextual audit again to assess whether the issue has been resolved.
+
+### Example
+
+**Original question:**  
+"What programming language did I say I was learning?"
+
+**Conversation context:**  
+The user previously stated that they were learning Python.
+
+**LLM answer:**  
+"You said you were learning Java."
+
+**Detected contextual failure:**  
+The answer contradicts the information available in the conversation history.
+
+**Illustrative refined prompt:**
+
+```text
+Answer the user's original question using the relevant
+conversation history provided below.
+
+Question:
+What programming language did I say I was learning?
+
+Conversation evidence:
+The user previously stated that they were learning Python.
+
+Correction required:
+The previous answer contradicted the conversation evidence.
+Use the supported information, do not introduce conflicting
+details, and state when the available context is insufficient.
+```
+
+**Expected improved answer:**  
+"You said you were learning Python."
+
+This example illustrates the prompt-improvement concept; actual outputs depend on the model and the supplied context.
+
+## API Endpoint
+
+### `POST /verify/context/mitigate`
+
+This endpoint runs the contextual auditing and mitigation workflow.
+
+**Example request:**
+
+```json
+{
+  "question": "What programming language did I say I was learning?",
+  "answer": "You said you were learning Java.",
+  "conversation_history": "User previously stated that they were learning Python.",
+  "context": "",
+  "instructions": "Answer using the available conversation context."
+}
+```
+
+The endpoint accepts the question, answer, and conversation history, with optional additional context and instructions. Refer to the implementation and API schema for the exact request fields and response structure supported by the current version.
+
+## Core Modules
+
+| Module | Responsibility |
+|---|---|
+| `contextual_audit/contextual_auditor.py` | Performs contextual auditing, analyzes failures, and coordinates the mitigation workflow. |
+| `contextual_audit/context_memory.py` | Supports handling and management of conversation context and memory. |
+| `contextual_audit/reliability_orchestrator.py` | Coordinates the reliability-related workflow across relevant components. |
+
+## LLM Integration
+
+The contextual workflow uses the Groq API with the configured model `openai/gpt-oss-120b` in the current implementation. The model is used for relevant auditing and/or prompt-refinement tasks as defined by the implementation.
+
+The API key should be configured through the appropriate environment variable rather than hardcoded in source files.
+
+## Relationship to Other Verification Modules
+
+TruthLens V2 contains distinct verification workflows:
+
+- **Factual Claim Verification:** Evaluates claims against retrieved evidence using the project's factual verification pipeline.
+- **Mathematical Verification:** Handles mathematical answer verification through the dedicated math-verification workflow.
+- **Contextual Hallucination Detection and Mitigation:** Evaluates answers against conversational context and instructions, and can use refined prompts to generate and re-verify candidate answers.
+
+These workflows address different types of reliability problems and should not be treated as interchangeable. Contextual re-verification alone does not guarantee that an answer is factually correct.
+
+## Limitations
+
+- The quality of contextual auditing depends on the completeness and relevance of the supplied conversation history and context.
+- LLM-based auditing can miss failures or incorrectly flag valid answers.
+- A refined prompt may improve an answer but does not guarantee correctness.
+- Re-verification provides an additional assessment, not a formal proof that all hallucinations have been eliminated.
+- Factual claims requiring external evidence may still need the project's separate factual verification workflow.
