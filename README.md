@@ -1,4 +1,4 @@
-# TruthLens V2
+# JARS
 
 ## LLM Hallucination Detection and Mitigation System
 
