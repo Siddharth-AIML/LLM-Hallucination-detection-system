@@ -1,2061 +1,261 @@
 # JARS
 
-## LLM Hallucination Detection and Mitigation System
+## A Hybrid Deterministic and Semantic Verification Framework for LLM Hallucination Detection
 
-TruthLens V2 is a **Responsible AI / Trustworthy AI** system designed to detect, verify, and mitigate factual hallucinations in Large Language Model (LLM) responses.
+JARS checks answers written by Large Language Models (LLMs) for hallucinations. It covers four kinds of output: factual statements, arithmetic, Python code and multi-turn conversations. Each answer is checked against a reference that suits it: a knowledge base of news articles, exact rational arithmetic, the Python syntax tree and the PyPI index, or the context and conversation history the user supplies.
 
-Instead of directly trusting an LLM-generated response, TruthLens breaks the response into individual claims, retrieves relevant evidence from a Knowledge Base using **FAISS + BM25 Hybrid Retrieval**, verifies the claim using deterministic evidence signals and LLM-based semantic analysis, and produces a confidence-aware verification result.
+Most hallucination detectors ask a second LLM to grade the answer. JARS doesn't let an LLM make the final decision in the factual, math or code modules. The factual pipeline combines six deterministic evidence signals with one narrow LLM label through fixed rules. The math and code modules use no LLM at all. When the evidence isn't good enough, JARS says `INSUFFICIENT_INFORMATION` instead of guessing.
 
-When the Knowledge Base does not contain sufficient evidence, TruthLens sends the missing claim into an **automated Knowledge Expansion Pipeline**. The system validates the topic using external sources and, when sufficiently supported, creates or updates knowledge in the Knowledge Base.
+> The project was developed under the name **TruthLens V2**. The code still lives in the `TruthLensv2/` folder, and some file names and log messages use the old name.
 
----
-
-# 📌 Project Classification
-
-### Primary Domain
-
-**Responsible AI / Trustworthy AI**
-
-### Specific Problem
-
-**LLM Hallucination Detection and Mitigation**
-
-### Supporting Areas
-
-- Generative AI / LLMs
-- Natural Language Processing
-- Information Retrieval
-- Semantic Search
-- Knowledge Representation
-- Evidence-based Verification
-- Explainable AI
-- Automated Knowledge Expansion
+**Team (VIT Mumbai, Computer Engineering, group 27P31; guide Dr. Amit Nerurkar):** Aryan Kulkarni, Rishant Singh, Jyotsna Kasibhotla, Siddharth Metkari
 
 ---
 
-# 🎯 Problem Statement
+## Contents
 
-Large Language Models can generate responses that are fluent and convincing but factually incorrect.
-
-A traditional LLM application may simply return the generated answer to the user.
-
-TruthLens introduces a verification layer between the generated answer and the user.
-
-The system asks:
-
-> **"Can this claim be supported by the evidence available to us?"**
-
-If sufficient evidence exists, the claim is verified.
-
-If evidence is insufficient, TruthLens does **not** force a decision. Instead, it can send the missing claim into the Knowledge Expansion Pipeline.
-
----
-
-# 🚀 What TruthLens Does
-
-TruthLens V2 performs the following major operations:
-
-1. Receives an LLM response.
-2. Extracts individual factual claims.
-3. Processes each claim.
-4. Searches the Knowledge Base using FAISS + BM25.
-5. Generates candidate evidence.
-6. Validates retrieved candidates.
-7. Calculates retrieval-related signals.
-8. Sends sufficient evidence to the Verifier.
-9. Performs deterministic verification.
-10. Uses an LLM for semantic evidence analysis.
-11. Produces a final verification result.
-12. Detects insufficient information.
-13. Adds missing claims to the Expansion Queue.
-14. Periodically validates missing topics using external sources.
-15. Creates or updates the Knowledge Base.
-16. Makes the updated knowledge available for future retrieval.
+1. [The four modules](#the-four-modules)
+2. [Results](#results)
+3. [Architecture](#architecture)
+4. [Factual verification pipeline](#factual-verification-pipeline)
+5. [Knowledge expansion](#knowledge-expansion)
+6. [Math verification](#math-verification)
+7. [Code verification](#code-verification)
+8. [Contextual audit, memory analysis and mitigation](#contextual-audit-memory-analysis-and-mitigation)
+9. [API reference](#api-reference)
+10. [Project structure](#project-structure)
+11. [Setup and running](#setup-and-running)
+12. [Tests](#tests)
+13. [Demo inputs](#demo-inputs)
+14. [Design principles](#design-principles)
+15. [Limitations](#limitations)
+16. [Future work](#future-work)
+17. [Guide for team members](#guide-for-team-members)
 
 ---
 
-# 🔄 ACTUAL IMPLEMENTED PIPELINE
+## The four modules
 
-This is the current implemented pipeline.
+| Module | What it checks | How it decides | Uses an LLM? | Verdicts |
+|---|---|---|---|---|
+| Factual verification | Claims in an answer, against the knowledge base | Hybrid retrieval, six signals and seven fusion rules | Claim extraction and one relation label only | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
+| Math verification | Arithmetic answers and their working | Rebuilds the expression from the question and computes it exactly | No | `VERIFIED`, `INCORRECT`, `UNABLE_TO_VERIFY` |
+| Code verification | Imports and function calls in Python code | Syntax tree, standard library, installed packages and PyPI | No | `SUPPORTED`, `CONTRADICTED`, `INSUFFICIENT_INFORMATION` per item |
+| Contextual audit | An answer against the context, conversation and instructions | Four-dimension audit, memory analysis, mitigation with re-audit | Yes | Per dimension (see below) |
 
-The Knowledge Expansion system is a feedback loop connected to the normal verification pipeline.
-
-```text
-                         LLM RESPONSE
-                              │
-                              ▼
-                    ┌───────────────────┐
-                    │   CLAIM PROCESSOR │
-                    │                   │
-                    │ Claim Extraction  │
-                    │ Claim Refinement  │
-                    │ Claim Filtering   │
-                    └─────────┬─────────┘
-                              │
-                        Individual Claim
-                              │
-                              ▼
-                    ┌───────────────────┐
-                    │  HYBRID RETRIEVER │
-                    └─────────┬─────────┘
-                              │
-                   ┌──────────┴──────────┐
-                   ▼                     ▼
-               ┌────────┐            ┌────────┐
-               │ FAISS  │            │  BM25  │
-               │Semantic│            │Keyword │
-               │Search  │            │Search  │
-               └────┬───┘            └────┬───┘
-                    │                     │
-                    └──────────┬──────────┘
-                               ▼
-                    Candidate Generation
-                               │
-                               ▼
-                    Candidate Validation
-                               │
-                               ▼
-                     Retrieval Confidence
-                               │
-                    ┌──────────┴──────────┐
-                    │                     │
-                    ▼                     ▼
-          Sufficient Evidence     Insufficient Evidence
-                    │                     │
-                    ▼                     ▼
-                VERIFIER           EXPANSION QUEUE
-                    │                     │
-                    │                   PENDING
-                    │                     │
-                    │                     ▼
-                    │             6-HOUR SCHEDULER
-                    │                     │
-                    │                     ▼
-                    │             TOPIC VALIDATOR
-                    │                     │
-                    │              External Sources
-                    │                     │
-                    │                     ▼
-                    │              LLM Validation
-                    │                     │
-                    │          ┌──────────┼──────────┐
-                    │          ▼          ▼          ▼
-                    │        VALID     INVALID      RETRY
-                    │          │          │           │
-                    │          ▼          ▼           │
-                    │     VALIDATED   DISCARDED       │
-                    │          │                     │
-                    │          ▼                Next Cycle
-                    │  KNOWLEDGE EXPANSION
-                    │       MANAGER
-                    │          │
-                    │          ▼
-                    │  KNOWLEDGE CREATION
-                    │       ENGINE
-                    │          │
-                    │          ▼
-                    │   KNOWLEDGE MANAGER
-                    │          │
-                    │          ▼
-                    │ knowledge_base.json
-                    │          │
-                    │          ▼
-                    │   Future Retrieval
-                    │
-                    ▼
-             VERIFICATION FUSION
-                    │
-                    ▼
-              FINAL VERDICT
-                    │
-          ┌─────────┼──────────────┐
-          ▼         ▼              ▼
-      SUPPORTED  CONTRADICTED  INSUFFICIENT
-```
+The web interface has five modes: Factual, Math, Code, Contextual audit and Context Memory Analysis.
 
 ---
 
-# 🧠 PIPELINE EXPLAINED STEP-BY-STEP
+## Results
 
-## Step 1 — LLM Response
+These numbers come from the saved test runs and the project data. Nothing else has been measured.
 
-TruthLens starts with an LLM-generated response.
-
-Example:
-
-```text
-SpaceX reported a loss of $541 million.
-```
-
-The complete response can contain multiple claims.
-
-TruthLens processes claims individually instead of treating the entire response as one fact.
-
----
-
-## Step 2 — Claim Processing
-
-The Claim Processing layer extracts and prepares individual claims.
-
-```text
-LLM Response
-     ↓
-Sentence Processing
-     ↓
-Claim Candidate Generation
-     ↓
-Claim Refinement
-     ↓
-Claim Filtering
-     ↓
-Individual Claim
-```
-
-The output is an individual claim ready for evidence retrieval.
-
----
-
-## Step 3 — Hybrid Retrieval
-
-Each claim is sent to the Hybrid Retriever.
-
-TruthLens uses two retrieval approaches:
-
-```text
-                 CLAIM
-                   │
-          ┌────────┴────────┐
-          ▼                 ▼
-        FAISS             BM25
-    Semantic Search    Keyword Search
-          │                 │
-          └────────┬────────┘
-                   ▼
-          Candidate Documents
-```
-
-### FAISS
-
-FAISS is used for semantic/vector retrieval.
-
-It helps find documents with similar meaning even when the wording is different.
-
-Example:
-
-```text
-Claim:
-SpaceX reported a loss of $541 million.
-
-Evidence:
-SpaceX's Q2 2026 financial results showed a
-net loss of 541 million dollars.
-```
-
-The wording is different, but the semantic meaning is similar.
-
-### BM25
-
-BM25 is used for lexical/keyword retrieval.
-
-It is useful for exact terms such as:
-
-- Entity names
-- Numbers
-- Dates
-- Important keywords
-
-For example:
-
-```text
-SpaceX
-541
-million
-loss
-2026
-```
-
-BM25 can strongly match these terms.
-
-### Why use FAISS + BM25?
-
-FAISS and BM25 solve different retrieval problems.
-
-```text
-FAISS
-   ↓
-"What evidence has a similar meaning?"
-
-BM25
-   ↓
-"What evidence contains important matching terms?"
-```
-
-For hallucination detection, both are useful.
-
-Semantic similarity alone does not guarantee that exact factual details match.
-
-Therefore:
-
-```text
-FAISS + BM25
-       ↓
-Hybrid Evidence Retrieval
-```
-
----
-
-## Step 4 — Candidate Generation
-
-The Hybrid Retriever generates candidate documents from the Knowledge Base.
-
-The candidates come from the combination of:
-
-```text
-FAISS results
-+
-BM25 results
-```
-
-The system then performs further validation instead of assuming that the retrieved documents are automatically correct evidence.
-
----
-
-## Step 5 — Candidate Validation
-
-Retrieved candidates are evaluated using several signals.
-
-Current signals include:
-
-```text
-Entity Consistency
-Keyword Consistency
-Temporal Consistency
-Evidence Coverage
-Source Reliability
-Evidence Agreement
-Evidence Count
-```
-
-These signals help determine whether the retrieved evidence is strong enough for verification.
-
----
-
-## Step 6 — Retrieval Confidence
-
-The retrieval stage determines whether enough useful evidence has been found.
-
-### Path A — Sufficient Evidence
-
-```text
-Claim
- ↓
-FAISS + BM25
- ↓
-Candidate Evidence
- ↓
-Candidate Validation
- ↓
-Sufficient Evidence
- ↓
-Verifier
-```
-
-### Path B — Insufficient Evidence
-
-```text
-Claim
- ↓
-FAISS + BM25
- ↓
-Weak / Insufficient Evidence
- ↓
-INSUFFICIENT_INFORMATION
- ↓
-Knowledge Expansion Required
- ↓
-Expansion Queue
-```
-
----
-
-## Step 7 — Verification
-
-If sufficient evidence is available, the claim enters the Verifier.
-
-The Verifier performs:
-
-```text
-Retrieved Evidence
-       ↓
-Evidence Collection
-       ↓
-Deterministic Verification Signals
-       +
-LLM Semantic Analysis
-       ↓
-Verification Fusion
-       ↓
-Final Verdict
-```
-
-Possible final outcomes:
-
-```text
-SUPPORTED
-CONTRADICTED
-INSUFFICIENT_INFORMATION
-```
-
----
-
-## Step 8 — Deterministic Verification Signals
-
-The verifier calculates evidence-related signals such as:
-
-| Signal | Purpose |
+| What | Result |
 |---|---|
-| Entity Consistency | Checks whether important entities match |
-| Keyword Consistency | Measures lexical overlap |
-| Temporal Consistency | Checks year/time alignment |
-| Evidence Coverage | Measures how much of the claim is represented |
-| Source Reliability | Uses stored source reliability |
-| Evidence Agreement | Measures agreement between evidence |
-| Evidence Count | Measures available evidence quantity |
+| Main test suite (team run, Python 3.10.11) | 62 tests: 59 passed, 3 skipped, 44.07 s |
+| Code verifier unit tests | 16 tests: 13 passed, 3 skipped (pypi.org unreachable) |
+| All runs combined | 98 tests: 92 passed, 6 skipped, 0 failed |
+| Math module | 21 unit tests and 5 API tests, all passed |
+| Edge cases F01–F10 (factual), C01–C10 (contextual) | 20 of 20 passed (LLM and auditor mocked) |
+| Code benchmark | 12 cases: TP 6, FP 0, FN 0, so precision = recall = F1 = 1.0 |
+| Knowledge base | 24 topics, 264 evidence items (101 truncated, 38.3%), 199 source records from 30 publishers |
+| Expansion queue | 10 entries: 3 VALID, 3 INVALID, 1 RETRY, 3 not yet processed |
 
-These signals are used together with LLM semantic analysis.
+The skipped tests either call paid or rate-limited APIs (they run only with `TRUTHLENS_RUN_LIVE=1`) or need pypi.org.
 
----
-
-## Step 9 — LLM Semantic Verification
-
-The verifier also sends the claim and retrieved evidence to the configured LLM service.
-
-The LLM analyzes the semantic relationship between:
-
-```text
-CLAIM
-   +
-EVIDENCE
-```
-
-The result contributes to the final verification decision.
-
-Important:
-
-> The LLM is not the only source of truth.
-
-TruthLens combines:
-
-```text
-Retrieval Evidence
-+
-Deterministic Signals
-+
-LLM Semantic Analysis
-```
+**Not measured yet:** accuracy of the live factual and contextual modules on labelled data, latency, and GSM8K accuracy. See [Limitations](#limitations).
 
 ---
 
-## Step 10 — Final Verification
+## Architecture
 
-The verification layer produces a final result.
-
-### SUPPORTED
-
-Evidence supports the claim.
+JARS runs two FastAPI services and a single-page frontend.
 
 ```text
-Claim
- ↓
-Relevant Evidence
- ↓
-Verification
- ↓
-SUPPORTED
+                      Browser (single-page frontend, 5 modes)
+                         │                              │
+                         ▼                              ▼
+        ┌────────────────────────────────┐   ┌──────────────────────────┐
+        │  Main server  api.py  :8000    │   │ Code server :8001        │
+        │                                │   │ (falls back to :8002)    │
+        │  /verify          factual      │   │                          │
+        │  /verify/math     math         │   │ /check-code              │
+        │  /verify/context  context      │   │   AST parsing            │
+        │  /verify/context/memory        │   │   stdlib / installed     │
+        │  /verify/context/full          │   │   PyPI + typosquat check │
+        │  /verify/context/mitigate      │   │   function checks        │
+        │  /health                       │   │ /health                  │
+        └───────┬───────────────┬────────┘   └────────────┬─────────────┘
+                │               │                         │
+                ▼               ▼                         ▼
+   knowledge_base.json      Groq API               PyPI JSON API
+   FAISS + BM25 indexes     (gpt-oss-120b)
+   expansion_queue.json
 ```
 
-### CONTRADICTED
-
-Retrieved evidence conflicts with the claim.
-
-```text
-Claim
- ↓
-Relevant Evidence
- ↓
-Conflicting Evidence
- ↓
-CONTRADICTED
-```
-
-### INSUFFICIENT_INFORMATION
-
-The system cannot reliably verify the claim using the current Knowledge Base.
-
-```text
-Claim
- ↓
-Insufficient Evidence
- ↓
-INSUFFICIENT_INFORMATION
-```
-
-This state is important because TruthLens does not force a binary decision when evidence is missing.
+The code verifier runs as a separate service so that slow PyPI requests don't hold up the main server. Both services accept requests only from local origins.
 
 ---
 
-# 🔄 KNOWLEDGE EXPANSION PIPELINE
-
-When a claim reaches:
+## Factual verification pipeline
 
 ```text
-INSUFFICIENT_INFORMATION
+LLM response
+   │
+   ▼
+1. Claim extraction (RichClaimExtractor, LLM)
+   │   atomic, self-contained claims
+   ▼
+2. Claim processing (ClaimProcessor)
+   │   entities, keywords, years, 384-d embedding
+   ▼
+3. Hybrid retrieval (HybridRetriever)
+   │   FAISS top 30 + BM25 top 30 → RRF (k = 60) → re-ranking
+   ▼
+4. Retrieval gate: confidence ≥ 0.50 and at least 2 evidence items?
+   │
+   ├── no  → INSUFFICIENT_INFORMATION, claim added to the expansion queue
+   │
+   └── yes
+        ▼
+5. Verifier: six deterministic signals + one LLM relation label
+        ▼
+6. Fusion rules 1–7 → verdict + confidence
 ```
 
-the system can start the Knowledge Expansion workflow.
+### 1. Claim extraction
+
+`RichClaimExtractor` sends the answer to `openai/gpt-oss-120b` on Groq at temperature 0. It uses a Claimify-style prompt with 17 rules. The prompt splits compound sentences, replaces pronouns with the names they refer to, keeps numbers and dates exactly, and drops opinions and filler. "The Eiffel Tower is in Paris and was built in 1889" becomes two claims, so one wrong part can't hide behind a right one. All prompts are listed in Appendix E of the project report.
+
+### 2. Claim processing
+
+`ClaimProcessor` adds to each claim:
+
+- named entities (spaCy `en_core_web_sm`)
+- keywords (KeyBERT)
+- four-digit years from 1900 to 2099
+- a 384-dimensional embedding (`all-MiniLM-L6-v2`)
+
+The result is a `ProcessedClaim` record.
+
+### 3. Hybrid retrieval
+
+| Method | Finds | Misses |
+|---|---|---|
+| FAISS (`IndexFlatIP`, cosine similarity on normalised MiniLM vectors) | Evidence with the same meaning in different words | Exact names, numbers and dates |
+| BM25 (`BM25Okapi`) | Exact entity names, numbers, dates and keywords | Paraphrases and synonyms |
+
+The top 30 results from each are merged with Reciprocal Rank Fusion. Each document scores `sum(1 / (k + rank))` over both lists, with `k = 60`. RRF uses only ranks, so the two methods' different score scales don't matter. The merged candidates are then re-ranked with weights 0.35, 0.25, 0.20, 0.10 and 0.10.
+
+A retrieved document is **not** treated as proof. It is only a candidate until the verifier has checked it.
+
+### 4. Retrieval gate
+
+A claim goes on to verification only if retrieval confidence is at least 0.50 and there are at least two evidence items. Otherwise it gets `INSUFFICIENT_INFORMATION` and is written to the expansion queue.
+
+### 5. Verifier signals
+
+| Signal | What it measures |
+|---|---|
+| Entity consistency | Whether the claim's named entities appear in the evidence |
+| Keyword consistency | Keyword overlap between claim and evidence |
+| Temporal consistency | Whether the claim's years match the evidence |
+| Evidence coverage | How much of the claim the evidence covers |
+| Source reliability | Stored reliability of the source (currently 0.90 for all sources) |
+| Evidence agreement | How much the evidence items agree (pairwise Jaccard similarity) |
+
+The LLM also labels the relation between the claim and the retrieved evidence as `SUPPORT`, `CONTRADICT`, `MIXED` or `NEUTRAL`, with a confidence. It judges only the evidence it is given, not its own memory.
+
+### 6. Fusion rules
+
+The rules are checked in order, and the first one that matches decides:
+
+1. Fewer than two evidence items → `INSUFFICIENT_INFORMATION`
+2. Coverage < 0.20 and entity consistency < 0.50 → `INSUFFICIENT_INFORMATION`
+3. Source reliability < 0.50 and fewer than three evidence items → `INSUFFICIENT_INFORMATION`
+4. Relation `CONTRADICT` with confidence ≥ 0.60 → `CONTRADICTED`
+5. Relation `MIXED` with confidence ≥ 0.60 → `PARTIALLY_SUPPORTED`
+6. Relation `SUPPORT` with confidence ≥ 0.60 → `SUPPORTED`
+7. Anything else → `INSUFFICIENT_INFORMATION`
+
+Rules 1–3 come first, so a confident LLM label can't produce a verdict on weak evidence. Contradiction is checked before support because passing a false claim as true is the worse error.
+
+### Confidence
+
+```text
+verifier confidence = (mean(coverage, reliability, agreement, entity) + LLM confidence) / 2
+final confidence    = min(retrieval confidence, verifier confidence)
+```
+
+For `INSUFFICIENT_INFORMATION`, the confidence is halved and capped at 0.49, so an abstention never looks like a confident answer. The confidence is a heuristic score. It has not been calibrated on labelled data.
 
 ---
 
-## Step 11 — Expansion Queue
+## Knowledge expansion
 
-The missing claim is added to the Expansion Queue.
-
-Example:
-
-```text
-Topic:
-SpaceX acquired Netflix in 2026.
-
-Status:
-PENDING
-```
-
-The queue manages topics waiting for external validation.
-
-Possible states:
-
-```text
-PENDING
-VALIDATED
-COMPLETED
-RETRY
-DISCARDED
-```
-
----
-
-## Step 12 — Six-Hour Expansion Scheduler
-
-The scheduler is responsible for running the expansion workflow periodically.
-
-### Test / One-Cycle Mode
-
-```bash
-python -m expansion.expansion_scheduler --once
-```
-
-This runs one expansion cycle immediately.
-
-### Continuous Mode
-
-```bash
-python -m expansion.expansion_scheduler
-```
-
-This runs the scheduler continuously according to the configured expansion interval.
-
----
-
-## Step 13 — Retry Preparation
-
-Before validating pending topics, the scheduler checks topics that previously received:
-
-```text
-RETRY
-```
-
-A retry topic can be reactivated for another validation cycle.
-
-```text
-RETRY
-  ↓
-Next Scheduler Cycle
-  ↓
-PENDING
-  ↓
-Topic Validator
-```
-
-This prevents uncertain topics from being permanently discarded after one unsuccessful search.
-
----
-
-## Step 14 — Topic Validation
-
-The Topic Validator determines whether external evidence supports the exact topic.
-
-The process is:
-
-```text
-Pending Topic
-      ↓
-External Search
-      ↓
-Multiple Sources
-      ↓
-Deduplication
-      ↓
-Source Relevance
-      ↓
-LLM Evidence Validation
-```
-
-The validator can return:
-
-```text
-VALID
-INVALID
-RETRY
-```
-
----
-
-## Step 15 — VALID
-
-If external evidence sufficiently supports the exact topic:
-
-```text
-VALID
- ↓
-VALIDATED
-```
-
-The topic can proceed to Knowledge Base expansion.
-
----
-
-## Step 16 — INVALID
-
-If the retrieved evidence does not support the exact topic:
-
-```text
-INVALID
- ↓
-DISCARDED
-```
-
-The system does not add unsupported information to the Knowledge Base.
-
----
-
-## Step 17 — RETRY
-
-If the search or evidence is insufficient to make a reliable decision:
-
-```text
-RETRY
-```
-
-The topic waits for a future expansion cycle.
-
-This is an important conservative design decision.
-
-TruthLens prefers:
-
-```text
-RETRY
-```
-
-over:
-
-```text
-False VALIDATION
-```
-
----
-
-## Step 18 — Knowledge Expansion Manager
-
-Once a topic is:
-
-```text
-VALIDATED
-```
-
-the Knowledge Expansion Manager processes it.
-
-```text
-VALIDATED Topic
-       ↓
-Validated Sources
-       ↓
-Source Documents
-       ↓
-Knowledge Creation Engine
-```
-
-The manager coordinates the expansion process.
-
----
-
-## Step 19 — Knowledge Creation Engine
-
-The Knowledge Creation Engine converts validated external information into structured knowledge.
-
-There are two possible cases.
-
-### New Topic
-
-```text
-Validated Topic
-      ↓
-No Existing Topic
-      ↓
-Create Knowledge
-      ↓
-Knowledge Base
-```
-
-### Existing Topic
-
-```text
-Validated Topic
-      ↓
-Related Topic Found
-      ↓
-Merge / Update
-      ↓
-Existing Knowledge Updated
-```
-
-This avoids unnecessary duplicate topics.
-
----
-
-## Step 20 — Knowledge Base Update
-
-The generated or updated knowledge is stored in:
-
-```text
-knowledge_base.json
-```
-
-The overall process is:
-
-```text
-Validated Evidence
-       ↓
-Knowledge Creation Engine
-       ↓
-Knowledge Manager
-       ↓
-knowledge_base.json
-```
-
----
-
-## Step 21 — Future Retrieval
-
-The updated Knowledge Base becomes available to the retrieval system.
-
-Conceptually:
-
-```text
-knowledge_base.json
-       ↓
-Knowledge Base
-       ↓
-Search Corpus
-       ↓
-FAISS + BM25
-       ↓
-Future Claims
-```
-
-Therefore the system forms a feedback loop:
+A fixed knowledge base goes out of date. JARS uses failed retrievals to find out what knowledge is missing.
 
 ```text
 INSUFFICIENT_INFORMATION
-          ↓
-   Knowledge Expansion
-          ↓
-   External Validation
-          ↓
-   Knowledge Creation
-          ↓
- Knowledge Base Update
-          ↓
-    Future Retrieval
+        │
+        ▼
+expansion_queue.json  (status PENDING)
+        │
+        ▼
+Expansion scheduler (one cycle, or every 6 hours)
+        │   RETRY topics from earlier cycles go back to PENDING first
+        ▼
+TopicValidator
+        │   Google News RSS, NewsAPI, Google Custom Search (up to 35 articles)
+        │   deduplication, relevance, LLM evidence validation
+        ▼
+   ┌────────────┬─────────────┬──────────────┐
+   ▼            ▼             ▼
+ VALID       INVALID        RETRY
+   │            │             │
+   ▼            ▼             ▼
+VALIDATED   DISCARDED    next cycle
+   │
+   ▼
+KnowledgeExpansionManager → KnowledgeCreationEngine → KnowledgeManager
+   │     creates a new topic, or merges into a related existing one
+   ▼
+knowledge_base.json → COMPLETED
+   │
+   ▼
+FAISS + BM25 rebuilt at the next server restart → future claims
 ```
+
+- **Validation and creation are separate.** `TopicValidator` only decides whether external sources support the exact claim. Related articles aren't enough. For "SpaceX acquired Netflix in 2026", it found articles on SpaceX acquisitions but none about Netflix, so it returned INVALID.
+- **RETRY is preferred over a false VALID.** When the search or the LLM call fails, the topic waits for the next cycle instead of being accepted.
+- **Batches follow the free-tier token budget.** `ARTICLE_TOKEN_BUDGET` is 6500, there are 20-second pauses between batches, and the Groq limit is 8,000 tokens per minute. Some article text is truncated to fit, which is why 38.3% of evidence items are truncated.
+- **New topics need a restart.** The running server doesn't rebuild its FAISS and BM25 indexes, so a new topic is searchable only after the next restart.
+
+**Example from the project:** the claim "SpaceX reported a loss of $541 million" was validated with confidence 1.0 from 33 sources. It became the topic "SpaceX Q2 2026 Earnings Report", with 41 evidence items. The two Eiffel Tower topics were added the same way.
 
 ---
 
-# 🏗️ SYSTEM ARCHITECTURE
+## Math verification
 
-The project can be viewed as the following major layers:
+The math module uses **no language model**. It is separate from the factual pipeline and has its own mode in the interface.
 
-```text
-┌──────────────────────────────────────────┐
-│               LLM INTERFACE              │
-│          ChatGPT / Gemini / LLMs         │
-└──────────────────────┬───────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────┐
-│             BROWSER EXTENSION            │
-│      Content Script / Background         │
-└──────────────────────┬───────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────┐
-│              FASTAPI SERVER              │
-└──────────────────────┬───────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────┐
-│          VERIFICATION BACKEND            │
-│                                          │
-│  Claim Processing                        │
-│        ↓                                 │
-│  Hybrid Retrieval                        │
-│        ↓                                 │
-│  Evidence Verification                   │
-│        ↓                                 │
-│  Confidence / Trust Analysis             │
-│        ↓                                 │
-│  Verification Report                     │
-└──────────────────────┬───────────────────┘
-                       │
-                       ▼
-              Knowledge Base
-                       │
-                ┌──────┴──────┐
-                ▼             ▼
-              FAISS          BM25
-                │             │
-                └──────┬──────┘
-                       │
-                       ▼
-                Future Retrieval
-                       ▲
-                       │
-             Knowledge Expansion
-                       ▲
-                       │
-              Insufficient Evidence
-```
+1. **Question interpreter.** A structured regular-expression grammar rebuilds the expression from the **question**, never from the model's answer. It recognises:
+   - explicit expressions: "What is 14 * 2.5 + 8?"
+   - equal sharing: "24 chocolates packed equally into 6 boxes" becomes 24 / 6
+   - addition: "5 apples, add 3 more" becomes 5 + 3
+2. **Rational arithmetic engine.** The expression is evaluated with `fractions.Fraction` and SymPy. Every value is an exact fraction, so 0.1 + 0.2 is exactly 3/10.
+3. **Answer and step checker.** It extracts the final answer and checks every intermediate statement in the working. It catches "5 + 3 = 9" even when the final answer of 8 is correct.
 
----
+| Verdict | When |
+|---|---|
+| `VERIFIED` | The final answer and every step match the computed result |
+| `INCORRECT` | A step is false, or the final answer differs from the computed result |
+| `UNABLE_TO_VERIFY` | The question is ambiguous, symbolic, missing a final answer, or outside the grammar |
 
-# 📂 PROJECT STRUCTURE
+The module never runs model-generated code and never trusts an equation stated in the model's answer. User pressure ("I'm sure it's 9, please confirm") doesn't change the result, because the module computes the answer itself. It is not a general algebra solver, and it abstains on purpose when it can't rebuild the question safely.
 
-The exact directory structure may evolve, but the important modules are organized around the following responsibilities:
-
-```text
-TruthLensV2/
-│
-├── verifier/
-│   └── verifier.py
-│
-├── retrieval/
-│   └── hybrid_retrieval.py
-│
-├── claim_processing/
-│   └── claim_processor.py
-│
-├── expansion/
-│   ├── expansion_queue.py
-│   ├── topic_validator.py
-│   ├── knowledge_expansion_manager.py
-│   └── expansion_scheduler.py
-│
-├── knowledge/
-│   ├── knowledge_creation_engine.py
-│   └── knowledge_manager.py
-│
-├── services/
-│   └── llm_service.py
-│
-├── knowledge_base.json
-│
-├── .env
-│
-└── README.md
-```
-
----
-
-# 🧩 IMPORTANT MODULE RESPONSIBILITIES
-
-## `verifier.py`
-
-### Role
-
-Main verification entry point.
-
-### Responsible for
-
-- Receiving claims
-- Calling retrieval
-- Collecting evidence
-- Running verification
-- Combining verification signals
-- Producing final verdict
-
-### Run
-
-```bash
-python -m verifier.verifier
-```
-
----
-
-## `hybrid_retrieval.py`
-
-### Role
-
-Evidence retrieval from the Knowledge Base.
-
-### Responsible for
-
-- Loading Knowledge Base
-- Preparing search corpus
-- Creating embeddings
-- Building FAISS index
-- Building BM25 index
-- Generating candidates
-- Validating candidates
-- Calculating retrieval confidence
-- Triggering missing-topic handling when evidence is insufficient
-
-### Important
-
-Do **not** treat this file as the final truth decision layer.
-
-Its primary responsibility is:
-
-```text
-Claim
- ↓
-Retrieve Evidence
- ↓
-Rank / Validate Evidence
- ↓
-Return Retrieval Result
-```
-
----
-
-## `claim_processor.py`
-
-### Role
-
-Claim preprocessing.
-
-Responsible for preparing claims before retrieval.
-
-Conceptually:
-
-```text
-Raw Claim
- ↓
-Normalization
- ↓
-Entity / Keyword Processing
- ↓
-Processed Claim
-```
-
----
-
-## `expansion_queue.py`
-
-### Role
-
-Stores topics that require Knowledge Base expansion.
-
-Example:
-
-```text
-PENDING
-```
-
-The queue separates:
-
-```text
-Verification
-```
-
-from:
-
-```text
-Knowledge Expansion
-```
-
----
-
-## `topic_validator.py`
-
-### Role
-
-Determines whether a missing topic is supported by external evidence.
-
-It does **not** directly update the Knowledge Base.
-
-It produces:
-
-```text
-VALID
-INVALID
-RETRY
-```
-
----
-
-## `knowledge_expansion_manager.py`
-
-### Role
-
-Processes topics that have already been externally validated.
-
-It coordinates:
-
-```text
-Validated Topic
- ↓
-Source Documents
- ↓
-Knowledge Creation Engine
- ↓
-Knowledge Update
-```
-
-The manager should not replace the Topic Validator.
-
----
-
-## `knowledge_creation_engine.py`
-
-### Role
-
-Creates or updates structured knowledge from validated information.
-
-It can:
-
-- Create new topics
-- Merge information into existing topics
-- Update existing knowledge
-- Generate structured knowledge fields
-
----
-
-## `knowledge_manager.py`
-
-### Role
-
-Manages persistence of Knowledge Base information.
-
-Primary storage:
-
-```text
-knowledge_base.json
-```
-
----
-
-## `expansion_scheduler.py`
-
-### Role
-
-Main controller for automated Knowledge Base expansion.
-
-It coordinates:
-
-```text
-Retry Topics
-      ↓
-Pending Topics
-      ↓
-Topic Validation
-      ↓
-Validated Topics
-      ↓
-Knowledge Expansion
-```
-
-### Run one cycle
-
-```bash
-python -m expansion.expansion_scheduler --once
-```
-
-### Run continuously
-
-```bash
-python -m expansion.expansion_scheduler
-```
-
----
-
-# ▶️ HOW TO RUN THE PROJECT
-
-## 1. Activate Virtual Environment
-
-Windows PowerShell:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
----
-
-## 2. Configure `.env`
-
-Required services depend on the current implementation.
-
-Example:
-
-```env
-GEMINI_API_KEY=your_gemini_key
-GROQ_API_KEY=your_groq_key
-NEWS_API_KEY=your_news_api_key
-GOOGLE_SEARCH_API_KEY=your_google_search_key
-GOOGLE_SEARCH_CX=your_google_search_engine_id
-```
-
-### IMPORTANT
-
-Never commit real API keys to GitHub.
-
-Use:
-
-```text
-.env
-```
-
-and add it to:
-
-```text
-.gitignore
-```
-
-Example:
-
-```gitignore
-.env
-venv/
-__pycache__/
-*.pyc
-```
-
----
-
-# 🧪 RUNNING THE NORMAL VERIFICATION PIPELINE
-
-Run:
-
-```powershell
-python -m verifier.verifier
-```
-
-This is the **main pipeline demo**.
-
-Use a claim such as:
-
-```text
-SpaceX reported a loss of $541 million.
-```
-
-Conceptually:
-
-```text
-LLM / User Claim
-      ↓
-Claim Processing
-      ↓
-FAISS + BM25
-      ↓
-Evidence Retrieval
-      ↓
-Verifier
-      ↓
-Final Result
-```
-
----
-
-# 🧪 TESTING INSUFFICIENT INFORMATION
-
-Use:
-
-```text
-SpaceX acquired Netflix in 2026.
-```
-
-The purpose of this test is to demonstrate the Knowledge Expansion path.
-
-Expected conceptual flow:
-
-```text
-Claim
- ↓
-Hybrid Retrieval
- ↓
-Insufficient Evidence
- ↓
-INSUFFICIENT_INFORMATION
- ↓
-Knowledge Expansion Required
- ↓
-Expansion Queue
- ↓
-PENDING
-```
-
----
-
-# 🧪 RUNNING KNOWLEDGE EXPANSION
-
-For a single expansion cycle:
-
-```powershell
-python -m expansion.expansion_scheduler --once
-```
-
-This is recommended for development and demonstrations.
-
-The output will show:
-
-```text
-Pending topics
-Validated topics
-Retry topics
-Validation results
-Expansion results
-```
-
----
-
-# ⏰ RUNNING THE CONTINUOUS SCHEDULER
-
-For continuous operation:
-
-```powershell
-python -m expansion.expansion_scheduler
-```
-
-The scheduler performs expansion cycles according to the configured interval.
-
-For demonstrations, prefer:
-
-```powershell
-python -m expansion.expansion_scheduler --once
-```
-
-because it executes immediately instead of waiting for the next scheduled cycle.
-
----
-
-# 🎬 RECOMMENDED TEAM DEMONSTRATION
-
-You do **not** need to execute every Python file individually.
-
-Use the main entry points.
-
-## Demo 1 — Normal Verification
-
-```powershell
-python -m verifier.verifier
-```
-
-Show:
-
-```text
-Claim
- ↓
-Claim Processing
- ↓
-FAISS + BM25
- ↓
-Evidence
- ↓
-Verifier
- ↓
-SUPPORTED / CONTRADICTED
-```
-
----
-
-## Demo 2 — Missing Evidence
-
-Use:
-
-```text
-SpaceX acquired Netflix in 2026.
-```
-
-Show:
-
-```text
-INSUFFICIENT_INFORMATION
-        ↓
-Knowledge Expansion Required
-        ↓
-PENDING
-```
-
----
-
-## Demo 3 — Knowledge Expansion
-
-Run:
-
-```powershell
-python -m expansion.expansion_scheduler --once
-```
-
-Show:
-
-```text
-PENDING
- ↓
-Topic Validator
- ↓
-VALID / INVALID / RETRY
-```
-
-If valid:
-
-```text
-VALIDATED
- ↓
-Knowledge Expansion Manager
- ↓
-Knowledge Creation Engine
- ↓
-Knowledge Base
-```
-
----
-
-# 📊 UNDERSTANDING THE SCHEDULER OUTPUT
-
-You may see:
-
-```text
-Pending topics before validation : 1
-Validated topics waiting for expansion : 0
-Retry topics : 0
-```
-
-Meaning:
-
-- **Pending** → topics waiting for validation
-- **Validated** → topics waiting for Knowledge Base expansion
-- **Retry** → topics that previously could not be reliably validated
-
----
-
-## Validation Output
-
-```text
-VALID
-```
-
-Means:
-
-> External evidence sufficiently supports the exact topic.
-
-```text
-INVALID
-```
-
-Means:
-
-> External evidence does not sufficiently support the exact topic.
-
-```text
-RETRY
-```
-
-Means:
-
-> The system could not make a reliable determination and will try again later.
-
----
-
-## Expansion Output
-
-You may see:
-
-```text
-Documents built = 33
-```
-
-This means validated external source information was converted into documents for the Knowledge Creation Engine.
-
-You may also see:
-
-```text
-Merging with existing topic
-Updating existing topic
-Topic updated successfully
-```
-
-This means the system found a related existing Knowledge Base topic and updated it instead of blindly creating a duplicate.
-
----
-
-# 🧪 RECOMMENDED DEMO CLAIMS
-
-## 1. Supported Claim
-
-```text
-SpaceX reported a loss of $541 million.
-```
-
-Use this to demonstrate the normal successful verification path.
-
-```text
-Claim
- ↓
-FAISS + BM25
- ↓
-Relevant Evidence
- ↓
-Verifier
- ↓
-SUPPORTED
-```
-
----
-
-## 2. Contradicted Claim
-
-A contradicted demo should be based on a fact that is explicitly present in the current Knowledge Base.
-
-For example, if the Knowledge Base states that SpaceX reported a loss:
-
-```text
-SpaceX reported a $541 million profit in Q2 2026.
-```
-
-This demonstrates:
-
-```text
-Claim
- ↓
-Relevant Evidence
- ↓
-Conflicting Evidence
- ↓
-CONTRADICTED
-```
-
-Do not use this test if the corresponding loss evidence is not currently present in the Knowledge Base.
-
----
-
-## 3. Insufficient Information
-
-```text
-SpaceX acquired Netflix in 2026.
-```
-
-Use this to demonstrate:
-
-```text
-INSUFFICIENT_INFORMATION
- ↓
-Knowledge Expansion Required
- ↓
-Expansion Queue
-```
-
----
-
-# 🔐 IMPORTANT DESIGN PRINCIPLES
-
-## 1. Retrieval is not Verification
-
-Do not assume:
-
-```text
-FAISS found document
-        ↓
-Claim is TRUE
-```
-
-Instead:
-
-```text
-FAISS + BM25
-        ↓
-Candidate Evidence
-        ↓
-Candidate Validation
-        ↓
-Verifier
-        ↓
-Final Decision
-```
-
----
-
-## 2. Semantic Similarity is not Truth
-
-A document can be semantically related to a claim without actually supporting it.
-
-Therefore TruthLens also considers:
-
-- Entities
-- Keywords
-- Time
-- Evidence coverage
-- Source reliability
-- Evidence agreement
-- LLM semantic relationship
-
----
-
-## 3. Missing Evidence is not False Evidence
-
-The system distinguishes between:
-
-```text
-CONTRADICTED
-```
-
-and:
-
-```text
-INSUFFICIENT_INFORMATION
-```
-
-These are fundamentally different.
-
-### CONTRADICTED
-
-Evidence exists and conflicts with the claim.
-
-### INSUFFICIENT_INFORMATION
-
-The system does not have enough reliable evidence to decide.
-
----
-
-## 4. Topic Validation and Knowledge Creation are Different
-
-This separation is important.
-
-```text
-Topic Validator
-      ↓
-"Is this topic sufficiently supported?"
-```
-
-Then:
-
-```text
-Knowledge Expansion Manager
-      ↓
-"How do we convert this validated information into KB knowledge?"
-```
-
-The Knowledge Creation Engine should not be used as a replacement for external validation.
-
----
-
-# ⚠️ DEVELOPMENT GUIDELINES FOR TEAM MEMBERS
-
-Before modifying a module, understand its responsibility.
-
-### Do not casually change:
-
-- Retrieval scoring
-- FAISS logic
-- BM25 logic
-- Verification thresholds
-- Knowledge creation structure
-- Queue status transitions
-- Scheduler state transitions
-
-These are core components of the implemented pipeline.
-
-If an improvement is required, first identify whether it belongs to:
-
-```text
-Claim Processing
-Retrieval
-Verification
-Expansion
-Knowledge Creation
-Persistence
-```
-
----
-
-# 🔧 CORE VS INTEGRATION CODE
-
-Some modules contain core algorithms while others connect components together.
-
-For example:
-
-```text
-hybrid_retrieval.py
-```
-
-contains the retrieval logic.
-
-When integrating new components, prefer changing the **integration layer** rather than rewriting the retrieval algorithm unless there is a specific reason.
-
-The same principle applies to:
-
-- Verifier
-- Knowledge Creation Engine
-- Topic Validator
-- Expansion Manager
-
----
-
-# 🧭 WHICH FILE SHOULD I RUN?
-
-For normal project execution:
-
-```text
-┌──────────────────────────────────────────────┐
-│ NORMAL VERIFICATION                          │
-│                                              │
-│ python -m verifier.verifier                  │
-└──────────────────────────────────────────────┘
-```
-
-For Knowledge Base expansion:
-
-```text
-┌──────────────────────────────────────────────┐
-│ ONE EXPANSION CYCLE                          │
-│                                              │
-│ python -m expansion.expansion_scheduler      │
-│ --once                                       │
-└──────────────────────────────────────────────┘
-```
-
-For continuous Knowledge Base expansion:
-
-```text
-┌──────────────────────────────────────────────┐
-│ CONTINUOUS EXPANSION                         │
-│                                              │
-│ python -m expansion.expansion_scheduler      │
-└──────────────────────────────────────────────┘
-```
-
-You generally should **not** run individual internal modules such as:
-
-```text
-expansion_queue.py
-topic_validator.py
-knowledge_expansion_manager.py
-hybrid_retrieval.py
-```
-
-as the primary application workflow.
-
-They are components coordinated by the main entry points.
-
----
-
-# 🗂️ STATE FLOW
-
-The Knowledge Expansion state machine can be understood as:
-
-```text
-                    ┌─────────────┐
-                    │   PENDING   │
-                    └──────┬──────┘
-                           │
-                    Topic Validation
-                           │
-             ┌─────────────┼─────────────┐
-             ▼             ▼             ▼
-           VALID         INVALID        RETRY
-             │             │             │
-             ▼             ▼             │
-        VALIDATED       DISCARDED        │
-             │                           │
-             ▼                           │
-      Knowledge Expansion                │
-             │                           │
-             ▼                           │
-         COMPLETED                       │
-                                         │
-                              Next Scheduler Cycle
-                                         │
-                                         ▼
-                                      PENDING
-```
-
----
-
-# 🔄 KNOWLEDGE BASE FEEDBACK LOOP
-
-The most important architectural concept is:
-
-```text
-                  ┌───────────────────────┐
-                  │      KNOWLEDGE BASE   │
-                  └───────────┬───────────┘
-                              │
-                              ▼
-                         FAISS + BM25
-                              │
-                              ▼
-                          Retrieval
-                              │
-                              ▼
-                           Verifier
-                              │
-                    ┌─────────┴─────────┐
-                    │                   │
-             Evidence Found      Evidence Missing
-                    │                   │
-                    ▼                   ▼
-                 Verdict          Expansion Queue
-                                        │
-                                        ▼
-                                External Validation
-                                        │
-                                        ▼
-                                Knowledge Creation
-                                        │
-                                        ▼
-                                 Updated KB
-                                        │
-                                        └─────────────►
-```
-
-This means the system can progressively expand its evidence coverage.
-
----
-
-# 📈 CURRENT SYSTEM CAPABILITIES
-
-The current implementation supports:
-
-- Claim-level processing
-- Knowledge Base retrieval
-- FAISS semantic retrieval
-- BM25 lexical retrieval
-- Hybrid candidate retrieval
-- Candidate validation
-- Evidence consistency signals
-- Source reliability
-- LLM semantic verification
-- Confidence-aware decisions
-- `SUPPORTED`
-- `CONTRADICTED`
-- `INSUFFICIENT_INFORMATION`
-- Knowledge Expansion Queue
-- PENDING / VALIDATED / RETRY / COMPLETED / DISCARDED states
-- External topic validation
-- Knowledge Creation Engine
-- Knowledge Base updates
-- Six-hour automated expansion workflow
-
----
-
-# 🚧 FUTURE IMPROVEMENTS
-
-Possible future enhancements include:
-
-- Automatic FAISS/BM25 index refresh immediately after every KB update
-- Persistent vector database
-- Improved source credibility scoring
-- More external search providers
-- Better evidence contradiction detection
-- Advanced temporal reasoning
-- Knowledge conflict resolution
-- Improved claim-to-evidence entailment
-- Real-time browser extension integration
-- Better provenance tracking
-- Advanced hallucination risk scoring
-
-These are future improvements and should not be confused with the currently implemented pipeline.
-
----
-
-# 🤝 TEAM CONTRIBUTION GUIDE
-
-Before contributing:
-
-## 1. Understand the pipeline
-
-Read:
-
-```text
-README.md
-```
-
-Then understand:
-
-```text
-verifier.py
-        ↓
-hybrid_retrieval.py
-        ↓
-expansion_queue.py
-        ↓
-topic_validator.py
-        ↓
-knowledge_expansion_manager.py
-        ↓
-knowledge_creation_engine.py
-        ↓
-knowledge_manager.py
-        ↓
-expansion_scheduler.py
-```
-
----
-
-## 2. Test before modifying
-
-Normal verification:
-
-```bash
-python -m verifier.verifier
-```
-
-Expansion:
-
-```bash
-python -m expansion.expansion_scheduler --once
-```
-
----
-
-## 3. Do not commit secrets
-
-Never commit:
-
-```text
-.env
-API keys
-tokens
-credentials
-```
-
----
-
-## 4. Keep responsibilities separated
-
-Avoid putting:
-
-```text
-retrieval logic
-verification logic
-knowledge creation logic
-scheduler logic
-```
-
-into the same module.
-
-Each module should have one clear responsibility.
-
----
-
-# 👥 TEAM COLLABORATION
-
-TruthLens V2 is designed as a modular system so team members can work independently on different components.
-
-Possible work areas:
-
-```text
-Claim Processing
-       │
-       ├── Claim extraction
-       └── Claim refinement
-
-Retrieval
-       │
-       ├── FAISS
-       ├── BM25
-       └── Hybrid ranking
-
-Verification
-       │
-       ├── Evidence signals
-       ├── LLM analysis
-       └── Confidence calculation
-
-Knowledge Expansion
-       │
-       ├── Queue
-       ├── Topic validation
-       ├── Scheduler
-       └── Expansion manager
-
-Knowledge System
-       │
-       ├── Knowledge creation
-       ├── Knowledge merging
-       └── Knowledge persistence
-
-Application Layer
-       │
-       ├── FastAPI
-       └── Browser Extension
-```
-
----
-
-# 🧠 QUICK UNDERSTANDING
-
-If you are new to the project, remember these five concepts first:
-
-### 1. Claim
-
-A factual statement extracted from an LLM response.
-
-### 2. Retrieval
-
-Finding relevant evidence from the Knowledge Base.
-
-### 3. Verification
-
-Determining whether the evidence supports or contradicts the claim.
-
-### 4. Knowledge Expansion
-
-Finding external information when the Knowledge Base is insufficient.
-
-### 5. Knowledge Base Feedback
-
-Adding validated knowledge back into the system so future claims can use it.
-
----
-
-# ⭐ ONE-LINE PROJECT DESCRIPTION
-
-> **TruthLens V2 is a Responsible AI system that detects and verifies LLM hallucinations through claim-level analysis, FAISS + BM25 hybrid evidence retrieval, evidence-grounded verification, and automated Knowledge Base expansion.**
-
----
-
-# 📌 FINAL PIPELINE
-
-```text
-LLM RESPONSE
-     ↓
-CLAIM EXTRACTION
-     ↓
-CLAIM PROCESSING
-     ↓
-FAISS + BM25 HYBRID RETRIEVAL
-     ↓
-CANDIDATE VALIDATION
-     ↓
-RETRIEVAL CONFIDENCE
-     ↓
-┌─────────────────────────────────┐
-│                                 │
-│ Evidence Available              │
-│         ↓                       │
-│      VERIFIER                   │
-│         ↓                       │
-│ LLM + Deterministic Signals     │
-│         ↓                       │
-│ Verification Fusion             │
-│         ↓                       │
-│ SUPPORTED / CONTRADICTED        │
-│                                 │
-└─────────────────────────────────┘
-                │
-                │ Insufficient Evidence
-                ▼
-        KNOWLEDGE EXPANSION QUEUE
-                ↓
-             PENDING
-                ↓
-        6-HOUR SCHEDULER
-                ↓
-         TOPIC VALIDATOR
-                ↓
-      External Evidence Search
-                ↓
-       LLM Evidence Validation
-                ↓
-       ┌────────┼────────┐
-       ▼        ▼        ▼
-     VALID   INVALID    RETRY
-       │        │        │
-       ▼        ▼        ▼
-  VALIDATED  DISCARDED  Next Cycle
-       │
-       ▼
-KNOWLEDGE EXPANSION MANAGER
-       ↓
-KNOWLEDGE CREATION ENGINE
-       ↓
-KNOWLEDGE MANAGER
-       ↓
-knowledge_base.json
-       ↓
-FAISS + BM25
-       ↓
-FUTURE RETRIEVAL
-```
-
----
-
-# 🏁 TruthLens V2
-
-### Detect → Retrieve → Verify → Expand → Learn
-
-**Responsible AI for more trustworthy LLM responses.**
-
----
-
-# 🧮 Independent Math Verification
-
-Math verification is an isolated capability alongside (not inside) the existing
-claim extraction, FAISS + BM25 retrieval, factual verifier, or knowledge
-expansion pipeline. It is exposed through the existing FastAPI demo and its
-current HTML/CSS/JavaScript frontend.
-
-The verifier reconstructs a limited set of explicit arithmetic expressions and
-simple, unambiguous word-problem operations from the **question**, evaluates
-them with bounded Python arithmetic, and uses SymPy for exact result
-comparison. It never evaluates generated Python or trusts an equation or
-assertion in the model response as evidence. Unsupported, ambiguous, or
-symbolic questions return `UNABLE_TO_VERIFY`; this is intentional. It is not a
-general-purpose algebra or natural-language math solver.
-
-## Setup and tests
-
-Install the added SymPy dependency along with the project's requirements from
-the repository root:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Run focused verifier and API tests from `TruthLensv2`:
-
-```powershell
-python -m unittest discover -s tests -v
-```
-
-## API usage
-
-Start the demo from the `TruthLensv2` directory:
-
-```powershell
-uvicorn api:app --port 8000
-```
-
-Submit the question and full LLM response separately:
+**Example request:**
 
 ```http
 POST /verify/math
@@ -2067,173 +267,133 @@ Content-Type: application/json
 }
 ```
 
-The response includes `verdict` (`VERIFIED`, `INCORRECT`, or
-`UNABLE_TO_VERIFY`), the question-derived `extracted_expression`,
-`computed_result`, the extracted `original_answer`, an explanation, and
-`is_conclusive`/`verification_status`. The route rejects blank or oversized
-inputs and applies a two-second request timeout. It does not run LLM-supplied
-code.
+The verdict is `INCORRECT`: the computed result is 7. The response includes `verdict`, `extracted_expression`, `computed_result`, `original_answer`, `explanation`, `is_conclusive` and `intermediate_errors`. The route rejects blank or oversized input and has a two-second timeout.
 
-The demo's **Math verification** mode displays the original question, LLM
-answer, extracted answer, independently reconstructed expression and result,
-verdict, explanation, and whether verification was conclusive. The factual
-verification mode remains unchanged.
+### GSM8K benchmark (opt-in, not yet run)
 
-## GSM8K benchmark (opt-in)
-
-The benchmark streams the official GSM8K `train` or `test` split, defaults to
-at most 100 test examples, and does not download data or call a model during
-normal setup or API operation. It uses the existing Groq provider; set
-`GROQ_API_KEY` and optionally `GROQ_MODEL_NAME`, or supply `--model`. The
-official test split is evaluation-only; do not tune prompts, verifier rules,
-or model selection against it. Install the optional dataset loader from the
-repository root:
+`scripts/benchmark_gsm8k.py` streams the GSM8K `train` or `test` split, asks the Groq model each question, and verifies its answer. It needs `GROQ_API_KEY` and the optional loader in `requirements-benchmark.txt`.
 
 ```powershell
 pip install -r requirements-benchmark.txt
-```
-
-Run a bounded test-split evaluation from the `TruthLensv2` directory:
-
-```powershell
 python scripts/benchmark_gsm8k.py --split test --limit 100 --model openai/gpt-oss-120b
 ```
 
-For a development run on training data, use `--split train`. To process a
-complete split, explicitly pass `--limit 0`; streaming avoids materializing
-the whole dataset in memory, but this will still make model calls for every
-example and may incur provider cost/rate limits. The script writes per-example
-answers, verdicts, reconstructed expressions/results, corrections, and
-failures to `gsm8k_results.csv`, plus summary metrics to
-`gsm8k_results.summary.json` (or files based on `--output`).
+`--limit 0` processes the whole split and makes a model call for every example. Results go to `gsm8k_results.csv` and `gsm8k_results.summary.json`. Use the test split only for evaluation, never for tuning. **GSM8K has not been run, so no score is claimed.** Coverage is expected to be limited, because the verifier abstains on multi-step problems it can't rebuild.
 
-Reported metrics include baseline and post-verification answer accuracy,
-incorrect-answer detection precision/recall/F1, unverified cases, and
-execution failures. A correction is applied only for `INCORRECT` cases with a
-question-derived calculation; inconclusive cases are left unchanged. GSM8K
-was not downloaded or run as part of implementation, so no benchmark scores
-are claimed here. Coverage on GSM8K is expected to be limited because the
-verifier deliberately abstains on multi-step or ambiguous calculations it
-cannot reconstruct safely.
+---
 
+## Code verification
 
- 
-
-# 🧩 Contextual Hallucination Detection and Prompt Improvement
-
-## Overview
-
-TruthLens V2 includes a contextual hallucination detection and mitigation workflow that evaluates an LLM-generated answer against the question asked, conversation history, and any additional context or instructions provided.
-
-Unlike claim-level factual verification, which focuses on checking claims against external evidence, contextual hallucination detection focuses on whether an answer is consistent with the available conversation context, follows the given instructions, and addresses the user's actual question.
-
-The workflow also supports **refined-prompt generation** to improve the answer when an actionable contextual failure is detected.
-
-## Key Features
-
-- **Context-Aware Auditing:** Evaluates answers using the question, generated answer, conversation history, and optional context or instructions.
-- **Contextual Failure Analysis:** Identifies potential issues such as missing context, contradictions, incorrect interpretation of the question, or failure to follow instructions.
-- **Actionability Assessment:** Determines whether the detected issue requires mitigation rather than automatically rewriting every answer.
-- **Refined-Prompt Generation:** Uses the identified failure and relevant context to construct an improved prompt that guides the LLM toward a more appropriate answer.
-- **Suggested Answer Generation:** Uses the refined prompt to generate a candidate improved answer.
-- **Re-Verification:** Audits the suggested answer again to assess whether the identified contextual issue has been addressed.
-- **Structured Results:** Returns the contextual audit and mitigation outcome for further inspection.
-
-## Contextual Hallucination Detection Workflow
+LLMs often suggest Python packages that don't exist. An attacker can register those names on PyPI, so anyone who installs one runs the attacker's code. The code module catches this **without ever running the submitted code**.
 
 ```text
-User Question + LLM Answer
-            |
-            v
-Conversation History, Context
-and Instructions Preparation
-            |
-            v
-     Initial Contextual Audit
-            |
-            v
-      Failure Analysis
-            |
-            v
- Is Mitigation Actionable?
-        /          \
-      No             Yes
-      |               |
-      v               v
- Return Audit     Refined-Prompt
- Findings         Generation
-                       |
-                       v
-                Suggested Answer
-                  Generation
-                       |
-                       v
-                  Re-Verification
-                       |
-                       v
-                Final Audit Result
+LLM response containing ```python blocks
+        │
+        ▼
+1. extract.py     find fenced code blocks, ast.parse()
+        │         syntax errors are reported as a finding, not a crash
+        ▼
+2. imports.py     each top-level module, checked in order:
+        │         stdlib → KNOWN_IMPORTS aliases (cv2 → opencv-python,
+        │         PIL → pillow, sklearn → scikit-learn) → installed (find_spec)
+        │         → PyPI JSON API
+        ▼
+3. background.py  release history from PyPI
+        │         not on PyPI → CONTRADICTED
+        │         name similarity ≥ 0.8 to a popular package (difflib)
+        │         AND (age < 90 days OR ≤ 2 releases OR no files)
+        │         → CONTRADICTED (likely typosquat)
+        │         new or thin package with no similar name → INSUFFICIENT_INFORMATION
+        ▼
+4. functions.py   for SUPPORTED packages only: import the module and check
+                  the attribute exists (random.randomint → CONTRADICTED)
 ```
 
-If no actionable contextual failure is identified, the workflow can return the audit findings without generating a refined prompt or suggested answer. When mitigation is appropriate, the system generates a refined prompt, obtains a candidate answer, and performs another audit.
+If PyPI can't be reached, the verdict is `INSUFFICIENT_INFORMATION`. The module never guesses.
 
-## Prompt Improvement and Mitigation
+**Benchmark (12 cases):**
 
-Prompt improvement is a mitigation strategy that uses the detected contextual failure to guide the next LLM response.
+- 6 real snippets, all passed: `os.listdir`, `json.dumps`, `math.isqrt`, `datetime.now()` on the class, `itertools.chain.from_iterable`, and `os.path` imported as `osp`.
+- 6 hallucinated snippets, all caught: `fastjson_turbo`, `reqeusts`, `random.randomint`, `statistics.average`, `now()` on the `datetime` module, and `itertools.flatten`.
 
-Instead of simply asking the model to regenerate an answer, the workflow aims to make the prompt more explicit about the original question, relevant conversation history, applicable instructions, and the issue that needs correction.
+**Known miss (fakefn-06):** `append_key` called on a dictionary variable isn't caught. Function checks work on module attributes, and without type inference the module can't know a local variable's type.
 
-The prompt-improvement process follows these steps:
+The module checks Python only.
 
-1. **Identify the failure:** Determine the contextual issue identified during the initial audit.
-2. **Preserve relevant context:** Retain the question, relevant conversation history, and applicable instructions.
-3. **Refine the prompt:** Explicitly guide the model to correct the identified issue and avoid repeating the same failure.
-4. **Generate a candidate answer:** Submit the refined prompt to the LLM.
-5. **Re-verify the answer:** Run the contextual audit again to assess whether the issue has been resolved.
+---
 
-### Example
+## Contextual audit, memory analysis and mitigation
 
-**Original question:**  
-"What programming language did I say I was learning?"
+Factual verification checks claims against external evidence. The contextual module checks whether an answer fits **the conversation**: the supplied context, the question, the earlier turns and the instructions.
 
-**Conversation context:**  
-The user previously stated that they were learning Python.
+**Inputs** (all modes): `question`, `answer`, `conversation_history`, and optionally `context` and `instructions`.
 
-**LLM answer:**  
-"You said you were learning Java."
+### Four audit dimensions
 
-**Detected contextual failure:**  
-The answer contradicts the information available in the conversation history.
+| Dimension | Question it answers | Result |
+|---|---|---|
+| Context faithfulness | Are the answer's claims supported by the documents the user supplied? | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
+| Conversation alignment | Does the answer address the question, or drift off topic? | `ALIGNED`, `MISALIGNED` |
+| Context memory | Does it respect what the user said in earlier turns? | Conflicts found or not |
+| Instruction consistency | Does it follow explicit instructions, prohibitions and format rules? | `FOLLOWED`, `VIOLATED` |
 
-**Illustrative refined prompt:**
+### Context Memory Analysis
+
+`ContextMemoryAnalyzer` extracts the user's explicit goals, preferences, constraints, decisions and corrections from the conversation history. It then checks whether the current answer conflicts with any of them. A typical catch is an answer that uses a date the user later corrected.
+
+### Mitigation and re-audit
 
 ```text
-Answer the user's original question using the relevant
-conversation history provided below.
-
-Question:
-What programming language did I say I was learning?
-
-Conversation evidence:
-The user previously stated that they were learning Python.
-
-Correction required:
-The previous answer contradicted the conversation evidence.
-Use the supported information, do not introduce conflicting
-details, and state when the available context is insufficient.
+Question + answer + history + context + instructions
+        │
+        ▼
+Initial audit → failures found?
+        │
+   no ──┴── yes
+   │         │
+   ▼         ▼
+Return    One LLM call writes a refined prompt (adds the violated
+audit     constraints and correction instructions) and a suggested answer
+             │
+             ▼
+          Re-audit of the suggested answer
+             │
+             ▼
+          Remaining failures, if any
 ```
 
-**Expected improved answer:**  
-"You said you were learning Python."
+When no actionable failure is found, the audit is returned without mitigation.
 
-This example illustrates the prompt-improvement concept; actual outputs depend on the model and the supplied context.
+**Example:**
 
-## API Endpoint
+| | |
+|---|---|
+| History | The user said they are learning Python. |
+| Question | "What programming language did I say I was learning?" |
+| Answer | "You said you were learning Java." |
+| Finding | Contradicts the conversation history (context memory) |
+| Suggested answer | "You said you were learning Python." |
 
-### `POST /verify/context/mitigate`
+### Important
 
-This endpoint runs the contextual auditing and mitigation workflow.
+This module **uses an LLM as the judge**, so it shares the weaknesses of LLM-as-a-judge methods. It can miss failures or flag valid answers. A refined prompt can improve an answer but doesn't guarantee it is correct, and passing the re-audit doesn't make an answer factually true. Its accuracy has not been measured. The contextual tests check request handling and response structure with a mocked auditor.
 
-**Example request:**
+---
+
+## API reference
+
+| Endpoint | Server | Method | Request | Main response fields |
+|---|---|---|---|---|
+| `/verify` | 8000 | POST | `{"text": str}` | `claims[]` with `verdict`, `confidence`, `llm_relation`, `explanation`, `deterministic_signals`, `supporting_evidence`, `contradicting_evidence`, and `summary` |
+| `/verify/math` | 8000 | POST | `{"question": str, "answer": str}` | `verdict`, `extracted_expression`, `computed_result`, `original_answer`, `explanation`, `is_conclusive`, `intermediate_errors` |
+| `/verify/context` | 8000 | POST | context request* | `status`, `audit` (four dimensions and `limitations`) |
+| `/verify/context/memory` | 8000 | POST | context request* | `memory_analysis` (`memory_items`, `answer_consistency`, `limitations`, `scope`) |
+| `/verify/context/full` | 8000 | POST | context request* | `contextual_audit`, `memory_analysis`, `errors`, `scope` |
+| `/verify/context/mitigate` | 8000 | POST | context request* | `initial_audit`, `failures`, `refined_prompt`, `suggested_answer`, `changes`, `re_verification`, `remaining_failures` |
+| `/check-code` | 8001 | POST | `{"text": str}` (1 to 100,000 chars) | `findings[]` (`block`, `kind`, `item`, `verdict`, `reason`), `summary`, `blocks_found` |
+| `/health` | 8000 and 8001 | GET | none | `{"status": "ok"}` |
+
+\* Context request:
 
 ```json
 {
@@ -2245,36 +405,292 @@ This endpoint runs the contextual auditing and mitigation workflow.
 }
 ```
 
-The endpoint accepts the question, answer, and conversation history, with optional additional context and instructions. Refer to the implementation and API schema for the exact request fields and response structure supported by the current version.
+If the pipeline fails, `/verify` returns HTTP 200 with `"claims": []` and an `error` field. Invalid requests get a 422. Interactive API docs are at `http://127.0.0.1:8000/docs`.
 
-## Core Modules
+---
 
-| Module | Responsibility |
+## Project structure
+
+```text
+TruthLensv2/
+├── api.py                          main FastAPI server (port 8000), serves the frontend
+├── claim_processing/
+│   └── claim_processor.py          RichClaimExtractor (LLM), ClaimProcessor
+├── retrieval/
+│   └── hybrid_retrieval.py         HybridRetriever: FAISS + BM25, RRF, re-ranking, gate
+├── verification/
+│   └── verifier.py                 six signals, Jaccard agreement, fusion rules, confidence
+├── expansion/
+│   ├── expansion_queue.py          queue and status transitions
+│   ├── topic_validator.py          external search + LLM validation
+│   ├── knowledge_expansion_manager.py
+│   └── expansion_scheduler.py      one cycle (--once) or every 6 hours
+├── knowledge_base/
+│   ├── knowledge_manager.py        JSON storage, schema checks, index creation
+│   └── topic_schema.py
+├── math_verifier/                  interpreter, engine, reasoning, answers (no LLM)
+├── code_verifier/
+│   ├── extract.py  imports.py  background.py  functions.py  checker.py
+│   ├── server.py                   code server (port 8001)
+│   └── tests/test_checker.py
+├── contextual_audit/
+│   ├── contextual_auditor.py       four-dimension audit, mitigation, re-audit
+│   └── context_memory.py           ContextMemoryAnalyzer
+├── services/
+│   └── llm_service.py              Groq client, token budget, batching
+├── frontend/                       index.html, script.js, style.css (5 modes)
+├── scripts/benchmark_gsm8k.py      opt-in GSM8K benchmark
+├── tests/                          pytest / unittest suites
+├── data/expansion_queue.json
+├── knowledge_base.json
+└── .env                            API keys (never commit)
+```
+
+`contextual_audit/reliability_orchestrator.py` is in the repository but isn't used by the current endpoints. The repository has about 17,750 lines of Python.
+
+---
+
+## Setup and running
+
+### Requirements
+
+- Python 3.10 or later (64-bit). The project was developed on 3.13.9 and the saved test run used 3.10.11.
+- Windows, Linux or macOS. No GPU is needed: the large model runs on Groq, and MiniLM, spaCy and FAISS run on the CPU.
+- Internet access for Groq, the news APIs and PyPI.
+
+### 1. Create the environment and install dependencies
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1          # Linux/macOS: source venv/bin/activate
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
+
+`requirements.txt` doesn't install the spaCy model. If you skip the last command, most tests fail with import errors: a test run on a second machine produced 61 errors for this reason alone.
+
+### 2. Configure `.env`
+
+Create `TruthLensv2/.env`:
+
+```env
+GROQ_API_KEY=your_groq_key                  # required
+NEWS_API_KEY=your_news_api_key              # knowledge expansion
+GOOGLE_SEARCH_API_KEY=your_google_key       # knowledge expansion
+GOOGLE_SEARCH_CX=your_search_engine_id      # knowledge expansion
+```
+
+Never commit `.env`. Make sure `.gitignore` contains:
+
+```gitignore
+.env
+venv/
+__pycache__/
+*.pyc
+```
+
+If a key has ever been committed, rotate it. Removing the file from git doesn't remove it from the history.
+
+### 3. Start the servers
+
+Terminal 1, the main server:
+
+```powershell
+cd TruthLensv2
+python -m uvicorn api:app --reload --host 127.0.0.1 --port 8000
+```
+
+Terminal 2, the code verifier:
+
+```powershell
+cd TruthLensv2
+python -m uvicorn code_verifier.server:app --port 8001
+```
+
+Then open **http://127.0.0.1:8000/** and pick a mode. If port 8001 is busy, run the code server on 8002; the frontend tries 8002 automatically.
+
+### 4. Run knowledge expansion (optional)
+
+From `TruthLensv2/`:
+
+```powershell
+python -m expansion.expansion_scheduler --once    # one cycle now (use this for demos)
+python -m expansion.expansion_scheduler           # keep running, one cycle every 6 hours
+```
+
+Restart the main server afterwards so new topics are indexed.
+
+The scheduler output shows:
+
+| Line | Meaning |
 |---|---|
-| `contextual_audit/contextual_auditor.py` | Performs contextual auditing, analyzes failures, and coordinates the mitigation workflow. |
-| `contextual_audit/context_memory.py` | Supports handling and management of conversation context and memory. |
-| `contextual_audit/reliability_orchestrator.py` | Coordinates the reliability-related workflow across relevant components. |
+| `Pending topics before validation` | Topics waiting for validation |
+| `Validated topics waiting for expansion` | Topics accepted but not yet added |
+| `Retry topics` | Topics that couldn't be decided last time |
+| `Documents built = 33` | Validated articles turned into documents |
+| `Merging with existing topic` / `Topic updated successfully` | Added to a related topic instead of creating a duplicate |
 
-## LLM Integration
+---
 
-The contextual workflow uses the Groq API with the configured model `openai/gpt-oss-120b` in the current implementation. The model is used for relevant auditing and/or prompt-refinement tasks as defined by the implementation.
+## Tests
 
-The API key should be configured through the appropriate environment variable rather than hardcoded in source files.
+```powershell
+# code verifier
+python -m pytest TruthLensv2/code_verifier/tests -v
 
-## Relationship to Other Verification Modules
+# main suite (math, API, validation, contracts, edge cases)
+$env:PYTHONPATH="TruthLensv2"
+python -m pytest TruthLensv2/tests -k "not test_existing_demo_ui_is_still_served" -v
+```
 
-TruthLens V2 contains distinct verification workflows:
+| File | Tests |
+|---|---|
+| `test_math_verifier.py` | 21 |
+| `test_math_api.py` | 5 |
+| `test_request_validation.py` | 13 |
+| `test_extreme_inputs.py` | 7 |
+| `test_context_modules_contract.py` | 8 |
+| `test_factual_pipeline_contract.py` | 3 |
+| `test_gsm8k_benchmark.py` | 2 |
+| `test_live_functionality_optional.py` | 3 (only with `TRUTHLENS_RUN_LIVE=1`) |
+| `test_factual_edge_cases_10.py` | 10 (F01–F10) |
+| `test_contextual_edge_cases_10_fixed.py` | 10 (C01–C10) |
+| `code_verifier/tests/test_checker.py` | 16 (3 need pypi.org) |
 
-- **Factual Claim Verification:** Evaluates claims against retrieved evidence using the project's factual verification pipeline.
-- **Mathematical Verification:** Handles mathematical answer verification through the dedicated math-verification workflow.
-- **Contextual Hallucination Detection and Mitigation:** Evaluates answers against conversational context and instructions, and can use refined prompts to generate and re-verify candidate answers.
+Live tests call paid or rate-limited APIs. Turn them on only when you mean to:
 
-These workflows address different types of reliability problems and should not be treated as interchangeable. Contextual re-verification alone does not guarantee that an answer is factually correct.
+```powershell
+$env:TRUTHLENS_RUN_LIVE="1"
+```
+
+Saved reports are in `reports/` (`functional-tests.txt`, `functional-tests.xml`, `factual-edge-10.xml`, `contextual-edge-10.xml`).
+
+---
+
+## Demo inputs
+
+Run every input once before a demo. LLM output varies, and the factual results depend on what is in the knowledge base.
+
+**Factual**
+
+| Input | Expected |
+|---|---|
+| `The Eiffel Tower is located in Paris. It was built in 1889 by Gustave Eiffel.` | Two claims, both `SUPPORTED` |
+| `SpaceX reported a loss of $541 million in its Q2 2026 earnings.` | `SUPPORTED` (topic added by knowledge expansion) |
+| `The Eiffel Tower was built in 1889 by Gustave Eiffel and is located in London.` | One claim supported, the London claim not |
+| `SpaceX acquired Netflix in 2026.` | `INSUFFICIENT_INFORMATION`, added to the expansion queue |
+
+**Math**
+
+| Question | Answer | Expected |
+|---|---|---|
+| What is 14 * 2.5 + 8? | 14 * 2.5 = 35, 35 + 8 = 43. The answer is 43. | `VERIFIED` |
+| 24 chocolates are packed equally into 6 boxes. How many in each box? | 24 / 6 = 5. Each box has 5. | `INCORRECT` |
+| Riya has 5 apples. She adds 3 more. How many does she have? | 5 + 3 = 9, so she has 8 apples. | `INCORRECT` (false step) |
+| Some chocolates are shared among a few friends. How many does each get? | Each gets 4. | `UNABLE_TO_VERIFY` |
+
+**Code**
+
+````text
+```python
+import fastjson_turbo
+import reqeusts
+import random
+import statistics
+
+x = random.randomint(1, 10)
+avg = statistics.average([1, 2, 3])
+```
+````
+
+Expected: all four items are `CONTRADICTED`.
+
+**Context Memory Analysis**
+
+| | |
+|---|---|
+| History | "My project demo is on 10 November." … "Correction: the demo has been moved to 14 November." … "I want to finish the report two days before the demo." |
+| Question | By which date should I finish my report? |
+| Answer | Since your demo is on 10 November, finish your report by 8 November. |
+| Expected | Conflict with the user's correction (the right date is 12 November) |
+
+---
+
+## Design principles
+
+1. **Retrieval is not verification.** A retrieved document is a candidate until the signals and rules have checked it.
+2. **Semantic similarity is not truth.** A related document may not support the claim, so entities, keywords, years, coverage, reliability and agreement are checked too.
+3. **Missing evidence is not false evidence.** `CONTRADICTED` means evidence exists and conflicts with the claim. `INSUFFICIENT_INFORMATION` means there isn't enough evidence to decide.
+4. **The LLM labels; the rules decide.** In the factual pipeline the LLM labels one relation, on evidence JARS retrieved. In math and code it isn't used at all.
+5. **Abstain rather than guess,** in every module.
+6. **Never execute untrusted code.**
+7. **Validation and knowledge creation are separate steps.** Expansion never adds information the validator hasn't accepted.
+
+---
 
 ## Limitations
 
-- The quality of contextual auditing depends on the completeness and relevance of the supplied conversation history and context.
-- LLM-based auditing can miss failures or incorrectly flag valid answers.
-- A refined prompt may improve an answer but does not guarantee correctness.
-- Re-verification provides an additional assessment, not a formal proof that all hallucinations have been eliminated.
-- Factual claims requiring external evidence may still need the project's separate factual verification workflow.
+| Limitation | Effect |
+|---|---|
+| No labelled evaluation of the live factual or contextual modules | No accuracy figure can be given |
+| Edge-case tests use mocked LLM responses | They test logic and structure, not LLM judgement |
+| Latency not measured | Time targets in FR-18 and NFR-01 to NFR-04 aren't verified |
+| Fusion thresholds (0.20, 0.50, 0.60) and RRF k not tuned | Set by design judgement |
+| Source reliability is 0.90 for every source | The signal doesn't yet separate sources |
+| 38.3% of evidence items truncated | Some claims abstain when the key sentence was cut |
+| Small knowledge base (24 topics), mostly Indian news | Many claims start as `INSUFFICIENT_INFORMATION` |
+| New topics need a server restart | Expansion doesn't help until the indexes are rebuilt |
+| Contextual audit depends on the LLM | It shares LLM-as-a-judge biases |
+| Code checks are Python-only and have no type inference | fakefn-06 is missed |
+| Depends on Groq's free tier | LLM-based modes stop if Groq is down or rate-limited; math and code keep working |
+| No authentication or user rate limiting | Local prototype only |
+
+---
+
+## Future work
+
+- Labelled evaluation: FEVER for factual, GSM8K for math, a larger code benchmark, human-labelled conversations
+- Latency measurement for every endpoint
+- Tune the thresholds and RRF k on validation data, and measure calibration
+- Per-publisher source reliability
+- Incremental index updates, so new topics are searchable without a restart
+- Chunk full articles instead of truncating them
+- Type inference in the code module, and npm support
+- A browser extension that checks answers inside chat interfaces
+- Hindi and Marathi support
+- Authentication and rate limiting for deployment
+
+---
+
+## Guide for team members
+
+**Before changing anything, find which layer it belongs to:** claim processing, retrieval, verification, expansion, knowledge creation, persistence, math, code, contextual, or API/frontend. Keep each module to one job. Don't put retrieval, verification, knowledge-creation and scheduling logic in the same file.
+
+**Don't casually change** these. They are the core of the system, and the report and tests describe them:
+
+- retrieval scoring, RRF and re-ranking weights
+- verification signals, fusion rules and thresholds
+- queue and scheduler status transitions
+- the knowledge base schema
+
+Put integration changes in the integration layer (`api.py`, the frontend) rather than rewriting core algorithms.
+
+**Before you commit:**
+
+1. Run both test suites (see [Tests](#tests)).
+2. Make sure no `.env` file, API key, token or credential is staged.
+3. If you changed a prompt, update Appendix E in the report.
+
+**Quick concepts:**
+
+| Term | Meaning |
+|---|---|
+| Claim | One checkable statement extracted from an LLM answer |
+| Retrieval | Finding candidate evidence in the knowledge base |
+| Verification | Deciding from signals and rules whether the evidence supports, contradicts or can't decide |
+| Knowledge expansion | Validating and adding missing topics from external sources |
+| Abstention | `INSUFFICIENT_INFORMATION` / `UNABLE_TO_VERIFY`: the system doesn't guess |
+
+---
+
+**JARS: extract, retrieve, verify, abstain, expand.**
