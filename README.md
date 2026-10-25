@@ -6,6 +6,8 @@ JARS checks answers written by Large Language Models (LLMs) for hallucinations. 
 
 Most hallucination detectors ask a second LLM to grade the answer. JARS doesn't let an LLM make the final decision in the factual, math or code modules. The factual pipeline combines six deterministic evidence signals with one narrow LLM label through fixed rules. The math and code modules use no LLM at all. When the evidence isn't good enough, JARS says `INSUFFICIENT_INFORMATION` instead of guessing.
 
+
+
 **Team (VIT Mumbai, Computer Engineering, group 27P31; guide Dr. Amit Nerurkar):** Aryan Kulkarni, Rishant Singh, Jyotsna Kasibhotla, Siddharth Metkari
 
 ---
@@ -34,12 +36,12 @@ Most hallucination detectors ask a second LLM to grade the answer. JARS doesn't 
 
 ## The four modules
 
-| Module               | What it checks                                               | How it decides                                                    | Uses an LLM?                                 | Verdicts                                                                       |
-| -------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
-| Factual verification | Claims in an answer, against the knowledge base              | Hybrid retrieval, six signals and seven fusion rules              | Claim extraction and one relation label only | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
-| Math verification    | Arithmetic answers and their working                         | Rebuilds the expression from the question and computes it exactly | No                                           | `VERIFIED`, `INCORRECT`, `UNABLE_TO_VERIFY`                                    |
-| Code verification    | Imports and function calls in Python code                    | Syntax tree, standard library, installed packages and PyPI        | No                                           | `SUPPORTED`, `CONTRADICTED`, `INSUFFICIENT_INFORMATION` per item               |
-| Contextual audit     | An answer against the context, conversation and instructions | Four-dimension audit, memory analysis, mitigation with re-audit   | Yes                                          | Per dimension (see below)                                                      |
+| Module | What it checks | How it decides | Uses an LLM? | Verdicts |
+|---|---|---|---|---|
+| Factual verification | Claims in an answer, against the knowledge base | Hybrid retrieval, six signals and seven fusion rules | Claim extraction and one relation label only | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
+| Math verification | Arithmetic answers and their working | Rebuilds the expression from the question and computes it exactly | No | `VERIFIED`, `INCORRECT`, `UNABLE_TO_VERIFY` |
+| Code verification | Imports and function calls in Python code | Syntax tree, standard library, installed packages and PyPI | No | `SUPPORTED`, `CONTRADICTED`, `INSUFFICIENT_INFORMATION` per item |
+| Contextual audit | An answer against the context, conversation and instructions | Four-dimension audit, memory analysis, mitigation with re-audit | Yes | Per dimension (see below) |
 
 The web interface has five modes: Factual, Math, Code, Contextual audit and Context Memory Analysis.
 
@@ -49,16 +51,16 @@ The web interface has five modes: Factual, Math, Code, Contextual audit and Cont
 
 These numbers come from the saved test runs and the project data. Nothing else has been measured.
 
-| What                                               | Result                                                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Main test suite (team run, Python 3.10.11)         | 62 tests: 59 passed, 3 skipped, 44.07 s                                                     |
-| Code verifier unit tests                           | 16 tests: 13 passed, 3 skipped (pypi.org unreachable)                                       |
-| All runs combined                                  | 98 tests: 92 passed, 6 skipped, 0 failed                                                    |
-| Math module                                        | 21 unit tests and 5 API tests, all passed                                                   |
-| Edge cases F01–F10 (factual), C01–C10 (contextual) | 20 of 20 passed (LLM and auditor mocked)                                                    |
-| Code benchmark                                     | 12 cases: TP 6, FP 0, FN 0, so precision = recall = F1 = 1.0                                |
-| Knowledge base                                     | 24 topics, 264 evidence items (101 truncated, 38.3%), 199 source records from 30 publishers |
-| Expansion queue                                    | 10 entries: 3 VALID, 3 INVALID, 1 RETRY, 3 not yet processed                                |
+| What | Result |
+|---|---|
+| Main test suite (team run, Python 3.10.11) | 62 tests: 59 passed, 3 skipped, 44.07 s |
+| Code verifier unit tests | 16 tests: 13 passed, 3 skipped (pypi.org unreachable) |
+| All runs combined | 98 tests: 92 passed, 6 skipped, 0 failed |
+| Math module | 21 unit tests and 5 API tests, all passed |
+| Edge cases F01–F10 (factual), C01–C10 (contextual) | 20 of 20 passed (LLM and auditor mocked) |
+| Code benchmark | 12 cases: TP 6, FP 0, FN 0, so precision = recall = F1 = 1.0 |
+| Knowledge base | 24 topics, 264 evidence items (101 truncated, 38.3%), 199 source records from 30 publishers |
+| Expansion queue | 10 entries: 3 VALID, 3 INVALID, 1 RETRY, 3 not yet processed |
 
 The skipped tests either call paid or rate-limited APIs (they run only with `TRUTHLENS_RUN_LIVE=1`) or need pypi.org.
 
@@ -139,10 +141,10 @@ The result is a `ProcessedClaim` record.
 
 ### 3. Hybrid retrieval
 
-| Method                                                                | Finds                                             | Misses                         |
-| --------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------ |
+| Method | Finds | Misses |
+|---|---|---|
 | FAISS (`IndexFlatIP`, cosine similarity on normalised MiniLM vectors) | Evidence with the same meaning in different words | Exact names, numbers and dates |
-| BM25 (`BM25Okapi`)                                                    | Exact entity names, numbers, dates and keywords   | Paraphrases and synonyms       |
+| BM25 (`BM25Okapi`) | Exact entity names, numbers, dates and keywords | Paraphrases and synonyms |
 
 The top 30 results from each are merged with Reciprocal Rank Fusion. Each document scores `sum(1 / (k + rank))` over both lists, with `k = 60`. RRF uses only ranks, so the two methods' different score scales don't matter. The merged candidates are then re-ranked with weights 0.35, 0.25, 0.20, 0.10 and 0.10.
 
@@ -154,14 +156,14 @@ A claim goes on to verification only if retrieval confidence is at least 0.50 an
 
 ### 5. Verifier signals
 
-| Signal               | What it measures                                                  |
-| -------------------- | ----------------------------------------------------------------- |
-| Entity consistency   | Whether the claim's named entities appear in the evidence         |
-| Keyword consistency  | Keyword overlap between claim and evidence                        |
-| Temporal consistency | Whether the claim's years match the evidence                      |
-| Evidence coverage    | How much of the claim the evidence covers                         |
-| Source reliability   | Stored reliability of the source (currently 0.90 for all sources) |
-| Evidence agreement   | How much the evidence items agree (pairwise Jaccard similarity)   |
+| Signal | What it measures |
+|---|---|
+| Entity consistency | Whether the claim's named entities appear in the evidence |
+| Keyword consistency | Keyword overlap between claim and evidence |
+| Temporal consistency | Whether the claim's years match the evidence |
+| Evidence coverage | How much of the claim the evidence covers |
+| Source reliability | Stored reliability of the source (currently 0.90 for all sources) |
+| Evidence agreement | How much the evidence items agree (pairwise Jaccard similarity) |
 
 The LLM also labels the relation between the claim and the retrieved evidence as `SUPPORT`, `CONTRADICT`, `MIXED` or `NEUTRAL`, with a confidence. It judges only the evidence it is given, not its own memory.
 
@@ -239,16 +241,16 @@ FAISS + BM25 rebuilt at the next server restart → future claims
 The math module uses **no language model**. It is separate from the factual pipeline and has its own mode in the interface.
 
 1. **Question interpreter.** A structured regular-expression grammar rebuilds the expression from the **question**, never from the model's answer. It recognises:
-   - explicit expressions: "What is 14 \* 2.5 + 8?"
+   - explicit expressions: "What is 14 * 2.5 + 8?"
    - equal sharing: "24 chocolates packed equally into 6 boxes" becomes 24 / 6
    - addition: "5 apples, add 3 more" becomes 5 + 3
 2. **Rational arithmetic engine.** The expression is evaluated with `fractions.Fraction` and SymPy. Every value is an exact fraction, so 0.1 + 0.2 is exactly 3/10.
 3. **Answer and step checker.** It extracts the final answer and checks every intermediate statement in the working. It catches "5 + 3 = 9" even when the final answer of 8 is correct.
 
-| Verdict            | When                                                                                |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `VERIFIED`         | The final answer and every step match the computed result                           |
-| `INCORRECT`        | A step is false, or the final answer differs from the computed result               |
+| Verdict | When |
+|---|---|
+| `VERIFIED` | The final answer and every step match the computed result |
+| `INCORRECT` | A step is false, or the final answer differs from the computed result |
 | `UNABLE_TO_VERIFY` | The question is ambiguous, symbolic, missing a final answer, or outside the grammar |
 
 The module never runs model-generated code and never trusts an equation stated in the model's answer. User pressure ("I'm sure it's 9, please confirm") doesn't change the result, because the module computes the answer itself. It is not a general algebra solver, and it abstains on purpose when it can't rebuild the question safely.
@@ -284,7 +286,7 @@ python scripts/benchmark_gsm8k.py --split test --limit 100 --model openai/gpt-os
 
 LLMs often suggest Python packages that don't exist. An attacker can register those names on PyPI, so anyone who installs one runs the attacker's code. The code module catches this **without ever running the submitted code**.
 
-````text
+```text
 LLM response containing ```python blocks
         │
         ▼
@@ -305,7 +307,7 @@ LLM response containing ```python blocks
         ▼
 4. functions.py   for SUPPORTED packages only: import the module and check
                   the attribute exists (random.randomint → CONTRADICTED)
-````
+```
 
 If PyPI can't be reached, the verdict is `INSUFFICIENT_INFORMATION`. The module never guesses.
 
@@ -328,12 +330,12 @@ Factual verification checks claims against external evidence. The contextual mod
 
 ### Four audit dimensions
 
-| Dimension               | Question it answers                                                   | Result                                                                         |
-| ----------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Context faithfulness    | Are the answer's claims supported by the documents the user supplied? | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
-| Conversation alignment  | Does the answer address the question, or drift off topic?             | `ALIGNED`, `MISALIGNED`                                                        |
-| Context memory          | Does it respect what the user said in earlier turns?                  | Conflicts found or not                                                         |
-| Instruction consistency | Does it follow explicit instructions, prohibitions and format rules?  | `FOLLOWED`, `VIOLATED`                                                         |
+| Dimension | Question it answers | Result |
+|---|---|---|
+| Context faithfulness | Are the answer's claims supported by the documents the user supplied? | `SUPPORTED`, `CONTRADICTED`, `PARTIALLY_SUPPORTED`, `INSUFFICIENT_INFORMATION` |
+| Conversation alignment | Does the answer address the question, or drift off topic? | `ALIGNED`, `MISALIGNED` |
+| Context memory | Does it respect what the user said in earlier turns? | Conflicts found or not |
+| Instruction consistency | Does it follow explicit instructions, prohibitions and format rules? | `FOLLOWED`, `VIOLATED` |
 
 ### Context Memory Analysis
 
@@ -364,13 +366,13 @@ When no actionable failure is found, the audit is returned without mitigation.
 
 **Example:**
 
-|                  |                                                       |
-| ---------------- | ----------------------------------------------------- |
-| History          | The user said they are learning Python.               |
-| Question         | "What programming language did I say I was learning?" |
-| Answer           | "You said you were learning Java."                    |
-| Finding          | Contradicts the conversation history (context memory) |
-| Suggested answer | "You said you were learning Python."                  |
+| | |
+|---|---|
+| History | The user said they are learning Python. |
+| Question | "What programming language did I say I was learning?" |
+| Answer | "You said you were learning Java." |
+| Finding | Contradicts the conversation history (context memory) |
+| Suggested answer | "You said you were learning Python." |
 
 ### Important
 
@@ -380,16 +382,16 @@ This module **uses an LLM as the judge**, so it shares the weaknesses of LLM-as-
 
 ## API reference
 
-| Endpoint                   | Server        | Method | Request                              | Main response fields                                                                                                                                            |
-| -------------------------- | ------------- | ------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/verify`                  | 8000          | POST   | `{"text": str}`                      | `claims[]` with `verdict`, `confidence`, `llm_relation`, `explanation`, `deterministic_signals`, `supporting_evidence`, `contradicting_evidence`, and `summary` |
-| `/verify/math`             | 8000          | POST   | `{"question": str, "answer": str}`   | `verdict`, `extracted_expression`, `computed_result`, `original_answer`, `explanation`, `is_conclusive`, `intermediate_errors`                                  |
-| `/verify/context`          | 8000          | POST   | context request\*                    | `status`, `audit` (four dimensions and `limitations`)                                                                                                           |
-| `/verify/context/memory`   | 8000          | POST   | context request\*                    | `memory_analysis` (`memory_items`, `answer_consistency`, `limitations`, `scope`)                                                                                |
-| `/verify/context/full`     | 8000          | POST   | context request\*                    | `contextual_audit`, `memory_analysis`, `errors`, `scope`                                                                                                        |
-| `/verify/context/mitigate` | 8000          | POST   | context request\*                    | `initial_audit`, `failures`, `refined_prompt`, `suggested_answer`, `changes`, `re_verification`, `remaining_failures`                                           |
-| `/check-code`              | 8001          | POST   | `{"text": str}` (1 to 100,000 chars) | `findings[]` (`block`, `kind`, `item`, `verdict`, `reason`), `summary`, `blocks_found`                                                                          |
-| `/health`                  | 8000 and 8001 | GET    | none                                 | `{"status": "ok"}`                                                                                                                                              |
+| Endpoint | Server | Method | Request | Main response fields |
+|---|---|---|---|---|
+| `/verify` | 8000 | POST | `{"text": str}` | `claims[]` with `verdict`, `confidence`, `llm_relation`, `explanation`, `deterministic_signals`, `supporting_evidence`, `contradicting_evidence`, and `summary` |
+| `/verify/math` | 8000 | POST | `{"question": str, "answer": str}` | `verdict`, `extracted_expression`, `computed_result`, `original_answer`, `explanation`, `is_conclusive`, `intermediate_errors` |
+| `/verify/context` | 8000 | POST | context request* | `status`, `audit` (four dimensions and `limitations`) |
+| `/verify/context/memory` | 8000 | POST | context request* | `memory_analysis` (`memory_items`, `answer_consistency`, `limitations`, `scope`) |
+| `/verify/context/full` | 8000 | POST | context request* | `contextual_audit`, `memory_analysis`, `errors`, `scope` |
+| `/verify/context/mitigate` | 8000 | POST | context request* | `initial_audit`, `failures`, `refined_prompt`, `suggested_answer`, `changes`, `re_verification`, `remaining_failures` |
+| `/check-code` | 8001 | POST | `{"text": str}` (1 to 100,000 chars) | `findings[]` (`block`, `kind`, `item`, `verdict`, `reason`), `summary`, `blocks_found` |
+| `/health` | 8000 and 8001 | GET | none | `{"status": "ok"}` |
 
 \* Context request:
 
@@ -520,12 +522,12 @@ Restart the main server afterwards so new topics are indexed.
 
 The scheduler output shows:
 
-| Line                                                         | Meaning                                                  |
-| ------------------------------------------------------------ | -------------------------------------------------------- |
-| `Pending topics before validation`                           | Topics waiting for validation                            |
-| `Validated topics waiting for expansion`                     | Topics accepted but not yet added                        |
-| `Retry topics`                                               | Topics that couldn't be decided last time                |
-| `Documents built = 33`                                       | Validated articles turned into documents                 |
+| Line | Meaning |
+|---|---|
+| `Pending topics before validation` | Topics waiting for validation |
+| `Validated topics waiting for expansion` | Topics accepted but not yet added |
+| `Retry topics` | Topics that couldn't be decided last time |
+| `Documents built = 33` | Validated articles turned into documents |
 | `Merging with existing topic` / `Topic updated successfully` | Added to a related topic instead of creating a duplicate |
 
 ---
@@ -541,19 +543,19 @@ $env:PYTHONPATH="TruthLensv2"
 python -m pytest TruthLensv2/tests -k "not test_existing_demo_ui_is_still_served" -v
 ```
 
-| File                                     | Tests                                |
-| ---------------------------------------- | ------------------------------------ |
-| `test_math_verifier.py`                  | 21                                   |
-| `test_math_api.py`                       | 5                                    |
-| `test_request_validation.py`             | 13                                   |
-| `test_extreme_inputs.py`                 | 7                                    |
-| `test_context_modules_contract.py`       | 8                                    |
-| `test_factual_pipeline_contract.py`      | 3                                    |
-| `test_gsm8k_benchmark.py`                | 2                                    |
-| `test_live_functionality_optional.py`    | 3 (only with `TRUTHLENS_RUN_LIVE=1`) |
-| `test_factual_edge_cases_10.py`          | 10 (F01–F10)                         |
-| `test_contextual_edge_cases_10_fixed.py` | 10 (C01–C10)                         |
-| `code_verifier/tests/test_checker.py`    | 16 (3 need pypi.org)                 |
+| File | Tests |
+|---|---|
+| `test_math_verifier.py` | 21 |
+| `test_math_api.py` | 5 |
+| `test_request_validation.py` | 13 |
+| `test_extreme_inputs.py` | 7 |
+| `test_context_modules_contract.py` | 8 |
+| `test_factual_pipeline_contract.py` | 3 |
+| `test_gsm8k_benchmark.py` | 2 |
+| `test_live_functionality_optional.py` | 3 (only with `TRUTHLENS_RUN_LIVE=1`) |
+| `test_factual_edge_cases_10.py` | 10 (F01–F10) |
+| `test_contextual_edge_cases_10_fixed.py` | 10 (C01–C10) |
+| `code_verifier/tests/test_checker.py` | 16 (3 need pypi.org) |
 
 Live tests call paid or rate-limited APIs. Turn them on only when you mean to:
 
@@ -571,21 +573,21 @@ Run every input once before a demo. LLM output varies, and the factual results d
 
 **Factual**
 
-| Input                                                                            | Expected                                                 |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `The Eiffel Tower is located in Paris. It was built in 1889 by Gustave Eiffel.`  | Two claims, both `SUPPORTED`                             |
-| `SpaceX reported a loss of $541 million in its Q2 2026 earnings.`                | `SUPPORTED` (topic added by knowledge expansion)         |
-| `The Eiffel Tower was built in 1889 by Gustave Eiffel and is located in London.` | One claim supported, the London claim not                |
-| `SpaceX acquired Netflix in 2026.`                                               | `INSUFFICIENT_INFORMATION`, added to the expansion queue |
+| Input | Expected |
+|---|---|
+| `The Eiffel Tower is located in Paris. It was built in 1889 by Gustave Eiffel.` | Two claims, both `SUPPORTED` |
+| `SpaceX reported a loss of $541 million in its Q2 2026 earnings.` | `SUPPORTED` (topic added by knowledge expansion) |
+| `The Eiffel Tower was built in 1889 by Gustave Eiffel and is located in London.` | One claim supported, the London claim not |
+| `SpaceX acquired Netflix in 2026.` | `INSUFFICIENT_INFORMATION`, added to the expansion queue |
 
 **Math**
 
-| Question                                                                | Answer                                         | Expected                 |
-| ----------------------------------------------------------------------- | ---------------------------------------------- | ------------------------ |
-| What is 14 \* 2.5 + 8?                                                  | 14 \* 2.5 = 35, 35 + 8 = 43. The answer is 43. | `VERIFIED`               |
-| 24 chocolates are packed equally into 6 boxes. How many in each box?    | 24 / 6 = 5. Each box has 5.                    | `INCORRECT`              |
-| Riya has 5 apples. She adds 3 more. How many does she have?             | 5 + 3 = 9, so she has 8 apples.                | `INCORRECT` (false step) |
-| Some chocolates are shared among a few friends. How many does each get? | Each gets 4.                                   | `UNABLE_TO_VERIFY`       |
+| Question | Answer | Expected |
+|---|---|---|
+| What is 14 * 2.5 + 8? | 14 * 2.5 = 35, 35 + 8 = 43. The answer is 43. | `VERIFIED` |
+| 24 chocolates are packed equally into 6 boxes. How many in each box? | 24 / 6 = 5. Each box has 5. | `INCORRECT` |
+| Riya has 5 apples. She adds 3 more. How many does she have? | 5 + 3 = 9, so she has 8 apples. | `INCORRECT` (false step) |
+| Some chocolates are shared among a few friends. How many does each get? | Each gets 4. | `UNABLE_TO_VERIFY` |
 
 **Code**
 
@@ -605,12 +607,12 @@ Expected: all four items are `CONTRADICTED`.
 
 **Context Memory Analysis**
 
-|          |                                                                                                                                                        |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| History  | "My project demo is on 10 November." … "Correction: the demo has been moved to 14 November." … "I want to finish the report two days before the demo." |
-| Question | By which date should I finish my report?                                                                                                               |
-| Answer   | Since your demo is on 10 November, finish your report by 8 November.                                                                                   |
-| Expected | Conflict with the user's correction (the right date is 12 November)                                                                                    |
+| | |
+|---|---|
+| History | "My project demo is on 10 November." … "Correction: the demo has been moved to 14 November." … "I want to finish the report two days before the demo." |
+| Question | By which date should I finish my report? |
+| Answer | Since your demo is on 10 November, finish your report by 8 November. |
+| Expected | Conflict with the user's correction (the right date is 12 November) |
 
 ---
 
@@ -628,20 +630,20 @@ Expected: all four items are `CONTRADICTED`.
 
 ## Limitations
 
-| Limitation                                                       | Effect                                                                           |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| No labelled evaluation of the live factual or contextual modules | No accuracy figure can be given                                                  |
-| Edge-case tests use mocked LLM responses                         | They test logic and structure, not LLM judgement                                 |
-| Latency not measured                                             | Time targets in FR-18 and NFR-01 to NFR-04 aren't verified                       |
-| Fusion thresholds (0.20, 0.50, 0.60) and RRF k not tuned         | Set by design judgement                                                          |
-| Source reliability is 0.90 for every source                      | The signal doesn't yet separate sources                                          |
-| 38.3% of evidence items truncated                                | Some claims abstain when the key sentence was cut                                |
-| Small knowledge base (24 topics), mostly Indian news             | Many claims start as `INSUFFICIENT_INFORMATION`                                  |
-| New topics need a server restart                                 | Expansion doesn't help until the indexes are rebuilt                             |
-| Contextual audit depends on the LLM                              | It shares LLM-as-a-judge biases                                                  |
-| Code checks are Python-only and have no type inference           | fakefn-06 is missed                                                              |
-| Depends on Groq's free tier                                      | LLM-based modes stop if Groq is down or rate-limited; math and code keep working |
-| No authentication or user rate limiting                          | Local prototype only                                                             |
+| Limitation | Effect |
+|---|---|
+| No labelled evaluation of the live factual or contextual modules | No accuracy figure can be given |
+| Edge-case tests use mocked LLM responses | They test logic and structure, not LLM judgement |
+| Latency not measured | Time targets in FR-18 and NFR-01 to NFR-04 aren't verified |
+| Fusion thresholds (0.20, 0.50, 0.60) and RRF k not tuned | Set by design judgement |
+| Source reliability is 0.90 for every source | The signal doesn't yet separate sources |
+| 38.3% of evidence items truncated | Some claims abstain when the key sentence was cut |
+| Small knowledge base (24 topics), mostly Indian news | Many claims start as `INSUFFICIENT_INFORMATION` |
+| New topics need a server restart | Expansion doesn't help until the indexes are rebuilt |
+| Contextual audit depends on the LLM | It shares LLM-as-a-judge biases |
+| Code checks are Python-only and have no type inference | fakefn-06 is missed |
+| Depends on Groq's free tier | LLM-based modes stop if Groq is down or rate-limited; math and code keep working |
+| No authentication or user rate limiting | Local prototype only |
 
 ---
 
@@ -681,13 +683,13 @@ Put integration changes in the integration layer (`api.py`, the frontend) rather
 
 **Quick concepts:**
 
-| Term                | Meaning                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| Claim               | One checkable statement extracted from an LLM answer                                       |
-| Retrieval           | Finding candidate evidence in the knowledge base                                           |
-| Verification        | Deciding from signals and rules whether the evidence supports, contradicts or can't decide |
-| Knowledge expansion | Validating and adding missing topics from external sources                                 |
-| Abstention          | `INSUFFICIENT_INFORMATION` / `UNABLE_TO_VERIFY`: the system doesn't guess                  |
+| Term | Meaning |
+|---|---|
+| Claim | One checkable statement extracted from an LLM answer |
+| Retrieval | Finding candidate evidence in the knowledge base |
+| Verification | Deciding from signals and rules whether the evidence supports, contradicts or can't decide |
+| Knowledge expansion | Validating and adding missing topics from external sources |
+| Abstention | `INSUFFICIENT_INFORMATION` / `UNABLE_TO_VERIFY`: the system doesn't guess |
 
 ---
 
