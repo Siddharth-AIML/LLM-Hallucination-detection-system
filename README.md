@@ -6,7 +6,7 @@ JARS checks answers written by Large Language Models (LLMs) for hallucinations. 
 
 Most hallucination detectors ask a second LLM to grade the answer. JARS doesn't let an LLM make the final decision in the factual, math or code modules. The factual pipeline combines six deterministic evidence signals with one narrow LLM label through fixed rules. The math and code modules use no LLM at all. When the evidence isn't good enough, JARS says `INSUFFICIENT_INFORMATION` instead of guessing.
 
-> The project was developed under the name **TruthLens V2**. The code still lives in the `TruthLensv2/` folder, and some file names and log messages use the old name.
+
 
 **Team (VIT Mumbai, Computer Engineering, group 27P31; guide Dr. Amit Nerurkar):** Aryan Kulkarni, Rishant Singh, Jyotsna Kasibhotla, Siddharth Metkari
 
