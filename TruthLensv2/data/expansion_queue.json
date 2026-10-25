@@ -4779,5 +4779,19 @@
         "created_at": "2026-10-22T04:22:55.278729",
         "updated_at": "2026-10-22T04:22:55.278729",
         "retry_count": 0
+    },
+    {
+        "topic": "The Reserve Bank of India's monetary policy committee announced a complete removal of all capital gains tax on equity investments.",
+        "status": "PENDING",
+        "created_at": "2026-10-25T16:22:00.857614",
+        "updated_at": "2026-10-25T16:22:00.857614",
+        "retry_count": 0
+    },
+    {
+        "topic": "Ola Electric confirmed that it has acquired Tesla's Indian manufacturing division outright.",
+        "status": "PENDING",
+        "created_at": "2026-10-25T16:26:01.651974",
+        "updated_at": "2026-10-25T16:26:01.651974",
+        "retry_count": 0
     }
 ]

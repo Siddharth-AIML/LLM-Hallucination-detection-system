@@ -87,6 +87,13 @@ CONVERSATION HISTORY:
 ACTIVE INSTRUCTIONS:
 {instructions or "[No separate instructions supplied]"}
 
+USER-STATED CONSTRAINTS IN THE CONVERSATION HISTORY:
+Constraints the user stated in CONVERSATION HISTORY (formatting, length,
+style, things to avoid, such as "at most two sentences" or "no bullet
+points") are ACTIVE INSTRUCTIONS, even if the ACTIVE INSTRUCTIONS field
+is empty. A newer explicit user statement supersedes an older one that
+conflicts with it.
+
 Audit these four dimensions independently.
 
 1. CONTEXT_FAITHFULNESS:
@@ -104,9 +111,17 @@ accurately. Without history, use NOT_ASSESSABLE.
 Never invent missing history.
 
 4. INSTRUCTION_CONSISTENCY:
-Check applicable instructions and whether newer explicit
-instructions supersede older conflicting instructions.
+Check the answer against every active instruction: the ACTIVE
+INSTRUCTIONS field and the user-stated constraints in CONVERSATION
+HISTORY. Check countable constraints literally (sentence counts,
+bullet points, length limits). Newer explicit instructions supersede
+older conflicting instructions.
 Use CONSISTENT, INCONSISTENT, or NOT_ASSESSABLE.
+If the answer violates any active instruction, including one stated
+only in the history, the verdict MUST be INCONSISTENT and the reason
+must name the violated constraint. Use CONSISTENT only when every
+active instruction is satisfied. Use NOT_ASSESSABLE only when no
+instruction exists in either place.
 
 Return ONLY valid JSON in this structure:
 {{
@@ -244,6 +259,91 @@ Do not invent evidence. State when material is insufficient.
 
         return failures
 
+    @staticmethod
+    def _memory_failures(
+        memory_result: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """Treat memory-analysis conflicts as actionable failures.
+
+        CONFLICTED always counts. PARTIALLY_CONSISTENT counts only when
+        it lists at least one concrete conflict.
+        """
+
+        if not isinstance(memory_result, dict):
+            return []
+
+        consistency = memory_result.get("answer_consistency")
+
+        if not isinstance(consistency, dict):
+            return []
+
+        verdict = consistency.get("verdict", "")
+        raw_conflicts = consistency.get("conflicts")
+        conflicts = [
+            c for c in (raw_conflicts if isinstance(raw_conflicts, list) else [])
+            if isinstance(c, dict)
+        ]
+
+        if verdict == "CONFLICTED" or (
+            verdict == "PARTIALLY_CONSISTENT" and conflicts
+        ):
+            return [{
+                "dimension": "memory_analysis.answer_consistency",
+                "verdict": verdict,
+                "reason": consistency.get("reason", ""),
+                "conflicts": conflicts,
+            }]
+
+        return []
+
+    @staticmethod
+    def _format_memory_conflicts(failures: list[dict[str, Any]]) -> str:
+        """Render conflicting user-stated constraints for the prompt."""
+
+        lines = []
+
+        for failure in failures:
+            if failure.get("dimension") != "memory_analysis.answer_consistency":
+                continue
+
+            for conflict in failure.get("conflicts", []):
+                lines.append(
+                    "- User-stated constraint: "
+                    f"{conflict.get('memory_statement', '')}\n"
+                    "  Answer excerpt that conflicts: "
+                    f"{conflict.get('answer_excerpt', '')}\n"
+                    f"  Why: {conflict.get('reason', '')}"
+                )
+
+            if not failure.get("conflicts") and failure.get("reason"):
+                lines.append(f"- {failure['reason']}")
+
+        return "\n".join(lines) or "[None]"
+
+    @staticmethod
+    def _analyze_memory(
+        memory_analyzer: Any,
+        history: str,
+        question: str,
+        answer: str,
+        instructions: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Run the memory analyzer; report a failure instead of raising."""
+
+        if memory_analyzer is None:
+            return None, None
+
+        try:
+            return memory_analyzer.analyze(
+                conversation_history=history,
+                current_question=question,
+                answer=answer,
+                instructions=instructions,
+            ), None
+        except Exception as error:
+            logger.exception("Memory analysis failed during mitigation")
+            return None, f"{type(error).__name__}: {error}"
+
     # ---------------------------------------------------------
     # 3. TARGETED MITIGATION
     # ---------------------------------------------------------
@@ -255,11 +355,16 @@ Do not invent evidence. State when material is insufficient.
         context: str = "",
         conversation_history: str = "",
         instructions: str = "",
+        memory_analyzer: Any = None,
     ) -> dict[str, Any]:
         """
         Audit an answer, generate a refined prompt and a corrected
         answer when actionable failures exist, then independently
         re-audit the proposed corrected answer.
+
+        When a memory_analyzer is supplied, its conflicts with
+        user-stated constraints count as actionable failures too, and
+        the corrected answer is re-checked by both analyzers.
 
         The refined prompt is returned for use by an LLM.
         This method does not automatically submit it to another LLM
@@ -284,27 +389,45 @@ Do not invent evidence. State when material is insufficient.
             instructions=instructions,
         )
 
-        failures = self._actionable_failures(initial_audit)
+        initial_memory, memory_error = self._analyze_memory(
+            memory_analyzer, history, question, answer, instructions
+        )
+
+        failures = (
+            self._actionable_failures(initial_audit)
+            + self._memory_failures(initial_memory)
+        )
 
         # No correction is needed if no actionable failure was found.
         if not failures:
+            message = (
+                "No actionable failure was detected by the initial "
+                "contextual audit. No refined prompt or corrected "
+                "answer was generated. This does not guarantee "
+                "factual correctness."
+            )
+
+            if memory_error:
+                message += (
+                    " The memory analysis could not be completed, so "
+                    "conflicts with earlier user constraints were not checked."
+                )
+
             return {
                 "status": "no_actionable_failure_detected",
                 "original_answer": answer,
                 "initial_audit": initial_audit,
+                "initial_memory_analysis": initial_memory,
+                "memory_analysis_error": memory_error,
                 "failures": [],
                 "refined_prompt": None,
                 "suggested_answer": None,
                 "changes": [],
                 "correction_limitations": [],
                 "re_verification": None,
+                "re_verification_memory": None,
                 "remaining_failures": [],
-                "message": (
-                    "No actionable failure was detected by the initial "
-                    "contextual audit. No refined prompt or corrected "
-                    "answer was generated. This does not guarantee "
-                    "factual correctness."
-                ),
+                "message": message,
             }
 
         # Generate TWO distinct outputs:
@@ -340,6 +463,12 @@ INITIAL AUDIT:
 
 DETECTED ACTIONABLE FAILURES:
 {json.dumps(failures, ensure_ascii=False)}
+
+CONFLICTS WITH USER-STATED CONSTRAINTS (from the conversation history):
+{self._format_memory_conflicts(failures)}
+
+Every user-stated constraint listed above must be stated explicitly in
+the refined prompt, and the suggested answer must satisfy it.
 
 OUTPUT REQUIREMENTS:
 
@@ -427,7 +556,16 @@ They serve different purposes and must be separate outputs.
             instructions=instructions,
         )
 
-        remaining_failures = self._actionable_failures(re_verification)
+        re_memory, re_memory_error = self._analyze_memory(
+            memory_analyzer, history, question, suggested_answer, instructions
+        )
+
+        remaining_failures = (
+            self._actionable_failures(re_verification)
+            + self._memory_failures(re_memory)
+        )
+
+        memory_error = memory_error or re_memory_error
 
         if remaining_failures:
             status = "reverified_with_remaining_issues"
@@ -444,16 +582,26 @@ They serve different purposes and must be separate outputs.
                 "This does not guarantee factual correctness."
             )
 
+        if memory_error:
+            message += (
+                " The memory analysis could not be completed for at "
+                "least one step, so conflicts with earlier user "
+                "constraints may not have been fully re-checked."
+            )
+
         return {
             "status": status,
             "original_answer": answer,
             "initial_audit": initial_audit,
+            "initial_memory_analysis": initial_memory,
+            "memory_analysis_error": memory_error,
             "failures": failures,
             "refined_prompt": refined_prompt,
             "suggested_answer": suggested_answer,
             "changes": mitigation.get("changes", []),
             "correction_limitations": mitigation.get("limitations", []),
             "re_verification": re_verification,
+            "re_verification_memory": re_memory,
             "remaining_failures": remaining_failures,
             "message": message,
         }

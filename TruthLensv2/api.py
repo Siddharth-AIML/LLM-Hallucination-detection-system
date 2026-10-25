@@ -145,6 +145,48 @@ def _run_memory_analysis(request):
     )
 
 
+# Positive verdicts of the audit dimensions that a memory-analysis
+# CONFLICTED result contradicts.
+_PASSING_AUDIT_VERDICTS = {
+    "instruction_consistency": {"CONSISTENT"},
+    "context_memory": {"SUPPORTED", "CONSISTENT"},
+}
+
+
+def _find_disagreements(audit_result, memory_result):
+    """
+    List cases where memory analysis reports CONFLICTED but the
+    contextual audit passed the same answer. Both verdicts are left
+    untouched; this only reports that the analyses disagree.
+    """
+    if not isinstance(audit_result, dict) or not isinstance(memory_result, dict):
+        return []
+
+    consistency = memory_result.get("answer_consistency")
+
+    if not isinstance(consistency, dict) or consistency.get("verdict") != "CONFLICTED":
+        return []
+
+    disagreements = []
+
+    for dimension, passing in _PASSING_AUDIT_VERDICTS.items():
+        section = audit_result.get(dimension)
+
+        if not isinstance(section, dict) or section.get("verdict") not in passing:
+            continue
+
+        disagreements.append({
+            "dimension": dimension,
+            "audit_verdict": section.get("verdict"),
+            "audit_reason": section.get("reason", ""),
+            "memory_verdict": "CONFLICTED",
+            "memory_reason": consistency.get("reason", ""),
+            "conflicts": consistency.get("conflicts", []),
+        })
+
+    return disagreements
+
+
 # ------------------------------------------------------------
 # FACTUAL VERIFICATION
 # POST /verify
@@ -382,6 +424,7 @@ def verify_context_full(request: ContextVerifyRequest):
         "answer": request.answer,
         "contextual_audit": audit_result,
         "memory_analysis": memory_result,
+        "disagreements": _find_disagreements(audit_result, memory_result),
         "errors": errors,
         "scope": {
             "contextual_audit": (
@@ -418,6 +461,7 @@ def verify_context_mitigate(request: ContextVerifyRequest):
             context=request.context,
             conversation_history=request.conversation_history,
             instructions=request.instructions,
+            memory_analyzer=context_memory_analyzer,
         )
 
         # Keep the response compatible with the existing frontend.

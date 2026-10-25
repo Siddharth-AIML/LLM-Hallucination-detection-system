@@ -487,3 +487,194 @@ details.evidence[open] > summary::before {
   color: var(--muted);
   word-break: break-word;
 }
+
+/* ============================================================
+   Unified reliability report (.rr)
+   Surfaces and text follow the page tokens (--panel, --ink,
+   --muted, --line, --bg); verdict badges carry their own
+   background and text colour, so they stay legible on light or
+   dark pages.
+   ============================================================ */
+
+.rr {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  --rr-ok-fg: #14693a;      --rr-ok-bg: #d9f0e2;
+  --rr-bad-fg: #a31f1f;     --rr-bad-bg: #fadcdc;
+  --rr-warn-fg: #7a5200;    --rr-warn-bg: #fbe9bd;
+  --rr-neutral-fg: #46546a; --rr-neutral-bg: #e3e8ef;
+}
+
+.rr-card {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+.rr-title { margin: 0 0 12px; font-size: 16px; }
+
+.rr-subtitle {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rr-muted, .rr-reason { margin: 6px 0 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.rr-muted { color: var(--muted); }
+.rr-question { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+
+/* Badges */
+.rr-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  white-space: nowrap;
+}
+.rr-ok      { background: var(--rr-ok-bg);      color: var(--rr-ok-fg); }
+.rr-bad     { background: var(--rr-bad-bg);     color: var(--rr-bad-fg); }
+.rr-warn    { background: var(--rr-warn-bg);    color: var(--rr-warn-fg); }
+.rr-neutral { background: var(--rr-neutral-bg); color: var(--rr-neutral-fg); }
+
+/* Summary bar */
+.rr-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+.rr-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 6px 4px 12px;
+  font-size: 12.5px;
+}
+.rr-pill-label { font-weight: 600; }
+
+/* Dimension rows */
+.rr-dim { padding: 10px 0; border-top: 1px solid var(--line); }
+.rr-dim:first-of-type { border-top: 0; padding-top: 0; }
+.rr-dim-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.rr-dim-label { font-weight: 600; font-size: 14px; }
+
+/* Quote box: preserves line breaks, such as bullets in an answer */
+.rr-quote {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 4px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Tables scroll inside their own container */
+.rr-table-wrap {
+  margin-top: 8px;
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.rr-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 13px; }
+.rr-table th, .rr-table td {
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rr-table th {
+  font-size: 11.5px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rr-table tr:last-child td { border-bottom: 0; }
+
+/* Callouts and conflicts */
+.rr-callout {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rr-bad-fg);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--rr-bad-bg);
+  color: var(--rr-bad-fg);
+  font-size: 13.5px;
+}
+.rr-callout .rr-reason { color: var(--rr-bad-fg); }
+.rr-callout .rr-table-wrap { background: var(--panel); color: var(--ink); }
+.rr-conflict { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rr-bad-fg); }
+.rr-conflict:first-of-type { border-top: 0; padding-top: 0; }
+.rr-conflict-line { display: flex; gap: 8px; margin-top: 4px; }
+.rr-conflict-label { flex: 0 0 96px; font-weight: 700; }
+.rr-conflict-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.rr-list { margin: 6px 0 0; padding-left: 20px; font-size: 13.5px; }
+
+/* Mitigation */
+.rr-mitigation-output { margin-top: 12px; }
+.rr-prompt-box {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+.rr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.rr-small { padding: 7px 14px; font-size: 13px; }
+.rr-mitigation-result > .rr-small { margin-right: 8px; }
+
+/* Technical details */
+.rr-tech {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 18px;
+}
+.rr-tech > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+.rr-card .rr-tech { margin-top: 14px; padding: 8px 12px; }
+.rr-json {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--ink);
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .rr-card { padding: 14px; }
+  .rr-conflict-line { flex-direction: column; gap: 0; }
+  .rr-conflict-label { flex-basis: auto; }
+}
+
+/* Amber variant: analyses disagree (not a failure of either one) */
+.rr-callout.rr-amber {
+  border-color: var(--rr-warn-fg);
+  background: var(--rr-warn-bg);
+  color: var(--rr-warn-fg);
+}
+.rr-callout.rr-amber .rr-reason { color: var(--rr-warn-fg); }
+.rr-disagreement { margin-top: 10px; }

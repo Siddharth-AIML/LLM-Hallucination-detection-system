@@ -505,7 +505,7 @@ async function verifyContext() {
 
   try {
     const data = await postJSON("/verify/context/full", payload);
-    renderFullReliability(data);
+    renderFullReliability(data, payload);
 
     statusEl.textContent =
       data.status === "completed"
@@ -521,72 +521,392 @@ async function verifyContext() {
   }
 }
 
-function renderFullReliability(data) {
-  resultsEl.replaceChildren();
+// ------------------------------------------------------------
+// Report rendering helpers. Everything is built with
+// createElement + textContent, so model output is never parsed
+// as HTML.
+// ------------------------------------------------------------
 
-  const overview = createCard("Unified Reliability Report");
-  showField(overview, "Workflow status", data.status);
-  showField(overview, "Question", data.question);
-  showField(overview, "Answer being audited", data.answer);
+// One place that decides colour. Unknown labels fall back to grey.
+const VERDICT_TONE = {
+  SUPPORTED: "ok",
+  ALIGNED: "ok",
+  FOLLOWED: "ok",
+  CONSISTENT: "ok",
+  CONTRADICTED: "bad",
+  MISALIGNED: "bad",
+  VIOLATED: "bad",
+  CONFLICTED: "bad",
+  INCONSISTENT: "bad",
+  PARTIALLY_SUPPORTED: "warn",
+  PARTIALLY_CONSISTENT: "warn"
+};
 
-  if (data.note) showField(overview, "Important note", data.note);
+function verdictTone(verdict) {
+  const key = String(verdict || "").trim().toUpperCase().replace(/\s+/g, "_");
+  return VERDICT_TONE[key] || "neutral";
+}
 
-  if (data.errors && Object.keys(data.errors).length) {
-    showField(overview, "Analysis errors", data.errors);
-  }
+const AUDIT_DIMENSIONS = [
+  ["context_faithfulness", "Context faithfulness"],
+  ["conversation_alignment", "Conversation alignment"],
+  ["context_memory", "Context memory"],
+  ["instruction_consistency", "Instruction consistency"]
+];
 
-  resultsEl.appendChild(overview);
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
 
-  const auditCard = createCard("1. Contextual Auditing");
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : {};
+}
 
-  if (data.contextual_audit == null) {
-    showField(auditCard, "Status", "Contextual audit did not complete.");
-  } else {
-    showObject(auditCard, data.contextual_audit);
-  }
+function isBlank(value) {
+  if (value === null || value === undefined) return true;
+  const text = String(value).trim();
+  return text === "" || text.toLowerCase() === "not provided";
+}
 
-  resultsEl.appendChild(auditCard);
+function cellText(value) {
+  if (isBlank(value)) return "—";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
 
-  const memoryCard = createCard("2. Context Memory Analysis");
+function verdictBadge(verdict) {
+  return el(
+    "span",
+    "rr-badge rr-" + verdictTone(verdict),
+    verdictLabel(isBlank(verdict) ? "NOT RUN" : verdict)
+  );
+}
 
-  if (data.memory_analysis == null) {
-    showField(memoryCard, "Status", "Memory analysis did not complete.");
-  } else {
-    renderMemoryFields(memoryCard, data.memory_analysis);
-  }
+function reportCard(title) {
+  const card = el("article", "rr-card");
+  card.appendChild(el("h2", "rr-title", title));
+  return card;
+}
 
-  resultsEl.appendChild(memoryCard);
+function quoteBox(text) {
+  return el("blockquote", "rr-quote", cellText(text));
+}
 
-  if (data.scope) {
-    const scopeCard = createCard("3. Analysis Scope");
-    showObject(scopeCard, data.scope);
-    resultsEl.appendChild(scopeCard);
-  }
+function makeTable(headers, rows) {
+  const wrap = el("div", "rr-table-wrap");
+  wrap.tabIndex = 0;
 
-  // Mitigation action uses the same question, answer, context,
-  // history and instructions that were used for the initial audit.
-  const mitigationCard = createCard("4. Targeted Mitigation");
+  const table = el("table", "rr-table");
+  const headRow = el("tr");
+  headers.forEach((name) => headRow.appendChild(el("th", "", name)));
+  table.appendChild(el("thead")).appendChild(headRow);
 
-  const explanation = document.createElement("p");
-  explanation.className = "explanation";
-  explanation.textContent =
-    "Ask TruthLens to propose a correction for actionable contextual " +
-    "or memory conflicts, then independently re-audit the corrected answer. " +
-    "The original answer will not be replaced automatically.";
-
-  mitigationCard.appendChild(explanation);
-
-  const mitigateButton = document.createElement("button");
-  mitigateButton.type = "button";
-  mitigateButton.className = "primary";
-  mitigateButton.textContent = "Suggest Correction & Re-verify";
-
-  mitigateButton.addEventListener("click", () => {
-    runContextMitigation(getContextPayload(), mitigateButton);
+  const body = el("tbody");
+  rows.forEach((cells) => {
+    const row = el("tr");
+    cells.forEach((cell) => {
+      const td = el("td");
+      if (cell instanceof Node) td.appendChild(cell);
+      else td.textContent = cellText(cell);
+      row.appendChild(td);
+    });
+    body.appendChild(row);
   });
 
-  mitigationCard.appendChild(mitigateButton);
-  resultsEl.appendChild(mitigationCard);
+  table.appendChild(body);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function summaryBar(entries) {
+  const bar = el("div", "rr-summary");
+
+  entries.forEach(({ label, verdict }) => {
+    const pill = el("div", "rr-pill");
+    pill.appendChild(el("span", "rr-pill-label", label));
+    pill.appendChild(verdictBadge(verdict));
+    bar.appendChild(pill);
+  });
+
+  return bar;
+}
+
+function auditSummaryEntries(audit) {
+  const source = asObject(audit);
+
+  return AUDIT_DIMENSIONS.map(([key, label]) => ({
+    label,
+    verdict: asObject(source[key]).verdict
+  }));
+}
+
+function dimensionRow(label, verdict, reason) {
+  const row = el("div", "rr-dim");
+  const head = el("div", "rr-dim-head");
+  head.append(el("span", "rr-dim-label", label), verdictBadge(verdict));
+  row.appendChild(head);
+
+  if (!isBlank(reason)) row.appendChild(el("p", "rr-reason", reason));
+  return row;
+}
+
+function bulletList(items) {
+  const list = el("ul", "rr-list");
+  items.forEach((item) => list.appendChild(el("li", "", cellText(item))));
+  return list;
+}
+
+function renderAuditCard(title, audit) {
+  const card = reportCard(title);
+
+  if (!audit || typeof audit !== "object") {
+    card.appendChild(el("p", "rr-muted", "Contextual audit did not complete."));
+    return card;
+  }
+
+  const faithfulness = asObject(audit.context_faithfulness);
+  card.appendChild(
+    dimensionRow(
+      "Context faithfulness",
+      faithfulness.verdict,
+      faithfulness.reason
+    )
+  );
+
+  const findings = Array.isArray(faithfulness.findings)
+    ? faithfulness.findings.filter((f) => f && typeof f === "object")
+    : [];
+
+  if (findings.length) {
+    card.appendChild(
+      makeTable(
+        ["Claim", "Verdict", "Reason", "Evidence"],
+        findings.map((f) => [
+          f.claim,
+          verdictBadge(f.verdict),
+          f.reason,
+          f.evidence
+        ])
+      )
+    );
+  } else {
+    card.appendChild(
+      el("p", "rr-muted", "No individual claims were assessed.")
+    );
+  }
+
+  AUDIT_DIMENSIONS.slice(1).forEach(([key, label]) => {
+    const section = asObject(audit[key]);
+    card.appendChild(dimensionRow(label, section.verdict, section.reason));
+  });
+
+  return card;
+}
+
+function collectLimitations(...sources) {
+  const seen = [];
+
+  sources.forEach((source) => {
+    const list = asObject(source).limitations;
+    if (!Array.isArray(list)) return;
+
+    list.forEach((item) => {
+      if (!isBlank(item) && !seen.includes(item)) seen.push(item);
+    });
+  });
+
+  return seen;
+}
+
+function renderLimitations(container, limitations) {
+  if (!limitations.length) return;
+
+  container.appendChild(el("h3", "rr-subtitle", "Limitations"));
+  container.appendChild(bulletList(limitations));
+}
+
+function renderTechnicalDetails(data, scope) {
+  const details = el("details", "rr-tech");
+  details.appendChild(el("summary", "", "Technical details"));
+
+  const scopeEntries = Object.entries(asObject(scope));
+
+  if (scopeEntries.length) {
+    details.appendChild(el("h3", "rr-subtitle", "Analysis scope"));
+
+    scopeEntries.forEach(([key, value]) => {
+      const line = el("p", "rr-reason");
+      line.append(
+        el("strong", "", key.replace(/_/g, " ") + ": "),
+        document.createTextNode(cellText(value))
+      );
+      details.appendChild(line);
+    });
+  }
+
+  if (data && !isBlank(data.note)) {
+    details.appendChild(el("h3", "rr-subtitle", "Note"));
+    details.appendChild(el("p", "rr-reason", data.note));
+  }
+
+  details.appendChild(el("h3", "rr-subtitle", "Raw JSON"));
+  details.appendChild(el("pre", "rr-json", JSON.stringify(data, null, 2)));
+  return details;
+}
+
+function renderFullReliability(data, payload) {
+  resultsEl.replaceChildren();
+
+  const root = el("div", "rr");
+
+  // 1. Summary bar: one badge per dimension plus memory analysis.
+  const overview = reportCard("Unified Reliability Report");
+
+  overview.appendChild(
+    summaryBar([
+      ...auditSummaryEntries(data.contextual_audit),
+      {
+        label: "Memory analysis",
+        verdict: asObject(asObject(data.memory_analysis).answer_consistency)
+          .verdict
+      }
+    ])
+  );
+
+  // Neither verdict is changed; the report only says they disagree.
+  const disagreements = Array.isArray(data.disagreements)
+    ? data.disagreements.filter((d) => d && typeof d === "object")
+    : [];
+
+  if (disagreements.length) overview.appendChild(renderDisagreements(disagreements));
+
+  // 2. Question and the answer being audited.
+  overview.appendChild(el("h3", "rr-subtitle", "Question"));
+  overview.appendChild(el("p", "rr-question", cellText(data.question)));
+  overview.appendChild(el("h3", "rr-subtitle", "Answer being audited"));
+  overview.appendChild(quoteBox(data.answer));
+
+  const errors = Object.entries(asObject(data.errors));
+
+  if (errors.length) {
+    const callout = el("div", "rr-callout");
+    callout.appendChild(el("strong", "", "Some analyses did not complete"));
+    errors.forEach(([key, value]) => {
+      callout.appendChild(
+        el("p", "rr-reason", key.replace(/_/g, " ") + ": " + cellText(value))
+      );
+    });
+    overview.appendChild(callout);
+  }
+
+  root.appendChild(overview);
+
+  // 3-4. Contextual audit dimensions.
+  root.appendChild(renderAuditCard("Contextual auditing", data.contextual_audit));
+
+  // 5-6. Memory analysis.
+  const memoryCard = reportCard("Context memory analysis");
+
+  if (data.memory_analysis == null) {
+    memoryCard.appendChild(
+      el("p", "rr-muted", "Memory analysis did not complete.")
+    );
+  } else {
+    renderMemoryAnalysis(memoryCard, data.memory_analysis);
+  }
+
+  root.appendChild(memoryCard);
+
+  // 7. Limitations (hidden when empty) and technical details.
+  const limitations = collectLimitations(
+    data.contextual_audit,
+    data.memory_analysis
+  );
+
+  if (limitations.length) {
+    const limitCard = reportCard("Limitations");
+    limitCard.appendChild(bulletList(limitations));
+    root.appendChild(limitCard);
+  }
+
+  // Mitigation uses the same inputs as the audit that produced this report.
+  root.appendChild(renderMitigationCard(payload));
+  root.appendChild(renderTechnicalDetails(data, data.scope));
+
+  resultsEl.appendChild(root);
+}
+
+function renderDisagreements(disagreements) {
+  const callout = el("div", "rr-callout rr-amber");
+  callout.setAttribute("role", "note");
+  callout.appendChild(el("strong", "", "The two analyses disagree"));
+
+  disagreements.forEach((item) => {
+    const label =
+      (AUDIT_DIMENSIONS.find(([key]) => key === item.dimension) || [])[1] ||
+      String(item.dimension || "").replace(/_/g, " ");
+
+    const row = el("div", "rr-disagreement");
+    const head = el("div", "rr-dim-head");
+    head.append(
+      el("span", "rr-dim-label", label + ":"),
+      verdictBadge(item.audit_verdict),
+      el("span", "", "vs. memory analysis:"),
+      verdictBadge(item.memory_verdict)
+    );
+    row.appendChild(head);
+
+    if (!isBlank(item.audit_reason)) {
+      row.appendChild(el("p", "rr-reason", "Audit said: " + item.audit_reason));
+    }
+    if (!isBlank(item.memory_reason)) {
+      row.appendChild(el("p", "rr-reason", "Memory analysis said: " + item.memory_reason));
+    }
+
+    callout.appendChild(row);
+  });
+
+  callout.appendChild(
+    el(
+      "p",
+      "rr-reason",
+      "Both results are shown unchanged. Check the conflict listed under " +
+      "context memory analysis against the answer yourself."
+    )
+  );
+
+  return callout;
+}
+
+function renderMitigationCard(payload) {
+  const card = reportCard("Targeted mitigation");
+
+  card.appendChild(
+    el(
+      "p",
+      "rr-reason",
+      "Ask TruthLens to propose a correction for actionable contextual " +
+      "or memory conflicts, then independently re-audit the corrected " +
+      "answer. The original answer will not be replaced automatically."
+    )
+  );
+
+  const button = el("button", "primary", "Suggest Correction & Re-verify");
+  button.type = "button";
+
+  const output = el("div", "rr-mitigation-output");
+  output.setAttribute("aria-live", "polite");
+
+  button.addEventListener("click", () => {
+    runContextMitigation(payload, button, output);
+  });
+
+  card.append(button, output);
+  return card;
 }
 
 // ============================================================
@@ -594,263 +914,272 @@ function renderFullReliability(data) {
 // POST /verify/context/mitigate
 // ============================================================
 
-async function runContextMitigation(payload, clickedButton) {
-  if (!payload.question || !payload.answer) {
-    showError("The question and answer are required for mitigation.");
+async function runContextMitigation(payload, clickedButton, output) {
+  if (!payload || !payload.question || !payload.answer) {
+    output.replaceChildren(
+      el("div", "error", "The question and answer are required for mitigation.")
+    );
     return;
   }
 
   // Prevent duplicate mitigation requests.
   if (clickedButton) clickedButton.disabled = true;
-  btnEl.disabled = true;
 
+  output.replaceChildren(
+    el("p", "rr-muted", "Generating a proposed correction and re-verifying it…")
+  );
   statusEl.textContent =
     "Generating a proposed correction and re-verifying it…";
 
   try {
-    const data = await postJSON("/verify/context/mitigate", payload);
+    // Same five fields that were sent to /verify/context/full.
+    const data = await postJSON("/verify/context/mitigate", {
+      question: payload.question,
+      answer: payload.answer,
+      context: payload.context,
+      conversation_history: payload.conversation_history,
+      instructions: payload.instructions
+    });
 
-    renderMitigationResult(data);
-
+    renderMitigationResult(output, data);
     statusEl.textContent =
       "Mitigation response received. Review the proposed correction and audit.";
   } catch (error) {
-    showError(
-      "Mitigation failed: " + error.message +
-      ". Confirm that POST /verify/context/mitigate exists and " +
-      "ContextualAuditor.audit_and_mitigate() is implemented."
+    // Shown next to the button so the audit report stays on screen.
+    output.replaceChildren(
+      el(
+        "div",
+        "error",
+        "Mitigation failed: " + (error && error.message ? error.message : error) +
+        ". Check that the API is running and that POST /verify/context/mitigate responds."
+      )
     );
+    statusEl.textContent = "Mitigation failed.";
   } finally {
     if (clickedButton) clickedButton.disabled = false;
-    btnEl.disabled = false;
   }
 }
 
+function copyButton(label, getText) {
+  const button = el("button", "primary rr-small", label);
+  button.type = "button";
 
-function renderMitigationResult(data) {
-  const card = createCard("Targeted Mitigation Result");
+  button.addEventListener("click", async () => {
+    let copied = false;
 
-  showField(card, "Status", data.status);
-  showField(card, "Message", data.message);
-  showField(card, "Original answer", data.original_answer);
+    try {
+      await navigator.clipboard.writeText(getText());
+      copied = true;
+    } catch (error) {
+      copied = false;
+    }
 
-  // 1. Refined prompt — the prompt to give the original LLM.
-  card.appendChild(makeHeading("1. Refined Prompt", "h3"));
+    button.textContent = copied ? "Copied!" : "Copy failed — select the text manually";
+    setTimeout(() => { button.textContent = label; }, 2000);
+  });
 
-  if (data.refined_prompt) {
-    const promptBox = document.createElement("div");
-    promptBox.className = "math-field";
+  return button;
+}
 
-    const promptText = document.createElement("textarea");
-    promptText.className = "refined-prompt-text";
-    promptText.value = String(data.refined_prompt);
-    promptText.readOnly = true;
-    promptText.rows = 10;
-    promptText.setAttribute("aria-label", "Refined prompt");
+function renderRemainingFailures(failures) {
+  const rows = failures.map((failure) => {
+    const item = asObject(failure);
+    const detail = [item.claim, item.reason].filter((v) => !isBlank(v)).join(" — ");
 
-    promptText.style.width = "100%";
-    promptText.style.boxSizing = "border-box";
-    promptText.style.resize = "vertical";
-    promptText.style.whiteSpace = "pre-wrap";
+    return [
+      String(item.dimension || "").replace(/[_.]/g, " "),
+      verdictBadge(item.verdict),
+      detail
+    ];
+  });
 
-    const copyPromptButton = document.createElement("button");
-    copyPromptButton.type = "button";
-    copyPromptButton.className = "primary";
-    copyPromptButton.textContent = "Copy Refined Prompt";
+  return makeTable(["Dimension", "Verdict", "Detail"], rows);
+}
 
-    copyPromptButton.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(promptText.value);
-        copyPromptButton.textContent = "Copied!";
-      } catch (error) {
-        // Fallback for browsers where Clipboard API is unavailable.
-        promptText.focus();
-        promptText.select();
+function renderMitigationResult(container, data) {
+  const result = el("div", "rr-mitigation-result");
 
-        const copied = document.execCommand("copy");
-        copyPromptButton.textContent = copied
-          ? "Copied!"
-          : "Select the prompt and copy it manually";
-      }
+  result.appendChild(el("h3", "rr-subtitle", "Mitigation result"));
+  if (!isBlank(data.message)) result.appendChild(el("p", "rr-reason", data.message));
 
-      setTimeout(() => {
-        copyPromptButton.textContent = "Copy Refined Prompt";
-      }, 2000);
-    });
+  const refinedPrompt = typeof data.refined_prompt === "string" ? data.refined_prompt : "";
+  const suggestedAnswer = typeof data.suggested_answer === "string" ? data.suggested_answer : "";
 
-    promptBox.appendChild(promptText);
-    promptBox.appendChild(copyPromptButton);
-    card.appendChild(promptBox);
-
-    const promptNote = document.createElement("p");
-    promptNote.className = "explanation";
-    promptNote.textContent =
-      "This prompt is ready to be supplied to the original LLM. " +
-      "TruthLens has generated it but has not automatically submitted it.";
-    card.appendChild(promptNote);
-  } else {
-    showField(
-      card,
-      "Refined prompt",
-      "No refined prompt was generated. Check whether the initial audit detected actionable failures."
-    );
+  if (!refinedPrompt && !suggestedAnswer) {
+    container.replaceChildren(result);
+    return;
   }
 
-  // 2. Proposed corrected answer — separate from the refined prompt.
-  card.appendChild(makeHeading("2. Proposed Corrected Answer", "h3"));
+  // Refined prompt — to give to the original LLM.
+  result.appendChild(el("h3", "rr-subtitle", "Refined prompt"));
 
-  if (data.suggested_answer) {
-    const answerBox = document.createElement("div");
-    answerBox.className = "math-field";
+  const promptBox = el("textarea", "rr-prompt-box");
+  promptBox.value = refinedPrompt;
+  promptBox.readOnly = true;
+  promptBox.rows = 10;
+  promptBox.setAttribute("aria-label", "Refined prompt");
 
-    const answerText = document.createElement("textarea");
-    answerText.value = String(data.suggested_answer);
-    answerText.readOnly = true;
-    answerText.rows = 7;
-    answerText.style.width = "100%";
-    answerText.style.boxSizing = "border-box";
-    answerText.style.resize = "vertical";
-
-    const copyAnswerButton = document.createElement("button");
-    copyAnswerButton.type = "button";
-    copyAnswerButton.className = "primary";
-    copyAnswerButton.textContent = "Copy Corrected Answer";
-
-    copyAnswerButton.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(answerText.value);
-        copyAnswerButton.textContent = "Copied!";
-      } catch (error) {
-        answerText.focus();
-        answerText.select();
-
-        const copied = document.execCommand("copy");
-        copyAnswerButton.textContent = copied
-          ? "Copied!"
-          : "Select the answer and copy it manually";
-      }
-
-      setTimeout(() => {
-        copyAnswerButton.textContent = "Copy Corrected Answer";
-      }, 2000);
-    });
-
-    const useButton = document.createElement("button");
-    useButton.type = "button";
-    useButton.className = "primary";
-    useButton.textContent = "Use Proposed Answer for Re-audit";
-
-    useButton.addEventListener("click", () => {
-      contextAnswerEl.value = String(data.suggested_answer);
-
-      contextAnswerEl.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-
-      contextAnswerEl.focus();
-
-      statusEl.textContent =
-        "Proposed answer placed in the input field. Review it before running another audit.";
-    });
-
-    answerBox.appendChild(answerText);
-    answerBox.appendChild(copyAnswerButton);
-    answerBox.appendChild(useButton);
-    card.appendChild(answerBox);
-  } else {
-    showField(card, "Proposed correction", "No corrected answer was generated.");
-  }
-
-  // 3. Audit trail and verification results.
-  const auditDetails = document.createElement("details");
-  auditDetails.className = "evidence";
-
-  const auditSummary = document.createElement("summary");
-  auditSummary.textContent = "View Audit Trail and Re-verification";
-  auditDetails.appendChild(auditSummary);
-
-  showField(auditDetails, "Initial audit", data.initial_audit);
-  showField(auditDetails, "Detected failures", data.failures);
-  showField(auditDetails, "Changes made", data.changes);
-  showField(
-    auditDetails,
-    "Mitigation limitations",
-    data.correction_limitations ?? data.limitations
+  result.append(
+    promptBox,
+    copyButton("Copy refined prompt", () => promptBox.value),
+    el(
+      "p",
+      "rr-muted",
+      "Ready to give to the original LLM. TruthLens has not submitted it."
+    )
   );
-  showField(auditDetails, "Re-verification", data.re_verification);
-  showField(auditDetails, "Remaining failures", data.remaining_failures);
 
-  card.appendChild(auditDetails);
-  resultsEl.appendChild(card);
+  // Suggested answer — separate from the prompt.
+  result.appendChild(el("h3", "rr-subtitle", "Suggested answer"));
+  result.appendChild(quoteBox(suggestedAnswer));
+
+  const answerActions = el("div", "rr-actions");
+  answerActions.appendChild(copyButton("Copy suggested answer", () => suggestedAnswer));
+
+  const useButton = el("button", "primary rr-small", "Use as answer for re-audit");
+  useButton.type = "button";
+  useButton.addEventListener("click", () => {
+    contextAnswerEl.value = suggestedAnswer;
+    contextAnswerEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    contextAnswerEl.focus();
+    statusEl.textContent =
+      "Suggested answer placed in the input field. Review it before running another audit.";
+  });
+  answerActions.appendChild(useButton);
+  result.appendChild(answerActions);
+
+  if (Array.isArray(data.changes) && data.changes.length) {
+    result.appendChild(el("h3", "rr-subtitle", "Changes made"));
+    result.appendChild(bulletList(data.changes));
+  }
+
+  // Re-audit of the suggested answer.
+  result.appendChild(el("h3", "rr-subtitle", "Re-audit of the suggested answer"));
+
+  if (data.re_verification && typeof data.re_verification === "object") {
+    const entries = auditSummaryEntries(data.re_verification);
+
+    if (data.re_verification_memory) {
+      entries.push({
+        label: "Memory analysis",
+        verdict: asObject(asObject(data.re_verification_memory).answer_consistency)
+          .verdict
+      });
+    }
+
+    result.appendChild(summaryBar(entries));
+  } else {
+    result.appendChild(el("p", "rr-muted", "No re-audit was returned."));
+  }
+
+  const remaining = Array.isArray(data.remaining_failures) ? data.remaining_failures : [];
+
+  if (remaining.length) {
+    const callout = el("div", "rr-callout");
+    callout.appendChild(el("strong", "", "Issues remaining after correction"));
+    callout.appendChild(renderRemainingFailures(remaining));
+    result.appendChild(callout);
+  }
+
+  renderLimitations(
+    result,
+    (Array.isArray(data.correction_limitations) ? data.correction_limitations : [])
+      .filter((item) => !isBlank(item))
+  );
+
+  const details = el("details", "rr-tech");
+  details.appendChild(el("summary", "", "Technical details"));
+  details.appendChild(el("pre", "rr-json", JSON.stringify(data, null, 2)));
+  result.appendChild(details);
+
+  container.replaceChildren(result);
 }
 
 // ============================================================
 // CONTEXT MEMORY RESULT RENDERING
 // ============================================================
 
-function renderMemoryFields(card, analysis) {
+function renderMemoryAnalysis(card, analysis) {
   if (!analysis || typeof analysis !== "object" || Array.isArray(analysis)) {
-    showField(card, "Result", analysis);
+    card.appendChild(el("p", "rr-muted", cellText(analysis)));
     return;
   }
 
-  const memoryItems = analysis.memory_items;
+  // Memory items.
+  card.appendChild(el("h3", "rr-subtitle", "Goals, preferences and decisions found"));
 
-  if (analysis.status !== undefined) {
-    showField(card, "Analysis status", analysis.status);
+  const items = Array.isArray(analysis.memory_items)
+    ? analysis.memory_items.filter((item) => item && typeof item === "object")
+    : null;
+
+  if (items === null) {
+    card.appendChild(el("p", "rr-muted", "No memory_items array was returned."));
+  } else if (!items.length) {
+    card.appendChild(el("p", "rr-muted", "No explicit memory items extracted."));
+  } else {
+    const showSupersedes = items.some((item) => !isBlank(item.supersedes));
+    const headers = ["Category", "Statement", "Evidence", "Status"];
+    if (showSupersedes) headers.push("Supersedes");
+
+    card.appendChild(
+      makeTable(
+        headers,
+        items.map((item) => {
+          const row = [item.category, item.statement, item.evidence, item.status];
+          if (showSupersedes) row.push(item.supersedes);
+          return row;
+        })
+      )
+    );
+  }
+
+  // Answer consistency.
+  card.appendChild(el("h3", "rr-subtitle", "Answer consistency"));
+
+  const consistency = asObject(analysis.answer_consistency);
+
+  if (isBlank(consistency.verdict) && isBlank(consistency.reason)) {
+    card.appendChild(
+      el("p", "rr-muted", "No answer-consistency verdict returned.")
+    );
+    return;
   }
 
   card.appendChild(
-    makeHeading("Extracted User Goals, Preferences, and Decisions", "h3")
+    dimensionRow("Answer vs. earlier instructions", consistency.verdict, consistency.reason)
   );
 
-  if (Array.isArray(memoryItems)) {
-    if (memoryItems.length === 0) {
-      showField(card, "Memory items", "No explicit memory items extracted.");
-    }
+  const conflicts = Array.isArray(consistency.conflicts)
+    ? consistency.conflicts.filter((c) => c && typeof c === "object")
+    : [];
 
-    memoryItems.forEach((item, index) => {
-      const itemCard = document.createElement("div");
-      itemCard.className = "math-field";
+  if (conflicts.length) {
+    const callout = el("div", "rr-callout");
+    callout.appendChild(
+      el("strong", "", conflicts.length === 1 ? "Conflict found" : "Conflicts found")
+    );
 
-      const itemHeading = document.createElement("div");
-      itemHeading.className = "math-field-label";
-      itemHeading.textContent = "Memory item " + (index + 1);
-      itemCard.appendChild(itemHeading);
+    conflicts.forEach((conflict) => {
+      const block = el("div", "rr-conflict");
 
-      showObject(itemCard, item);
-      card.appendChild(itemCard);
+      [
+        ["Rule", conflict.memory_statement],
+        ["In the answer", conflict.answer_excerpt],
+        ["Why", conflict.reason]
+      ].forEach(([label, value]) => {
+        const line = el("div", "rr-conflict-line");
+        line.append(
+          el("span", "rr-conflict-label", label + ":"),
+          el("span", "rr-conflict-text", cellText(value))
+        );
+        block.appendChild(line);
+      });
+
+      callout.appendChild(block);
     });
-  } else {
-    showField(card, "Memory items", "No memory_items array was returned.");
+
+    card.appendChild(callout);
   }
-
-  const consistency = analysis.answer_consistency;
-
-  card.appendChild(makeHeading("Answer Consistency", "h3"));
-
-  if (consistency === undefined) {
-    showField(card, "Verdict", "No answer-consistency verdict returned.");
-  } else if (
-    consistency &&
-    typeof consistency === "object" &&
-    !Array.isArray(consistency)
-  ) {
-    showObject(card, consistency);
-  } else {
-    showField(card, "Verdict", consistency);
-  }
-
-  const handled = new Set([
-    "status",
-    "memory_items",
-    "answer_consistency"
-  ]);
-
-  Object.entries(analysis).forEach(([key, value]) => {
-    if (!handled.has(key)) showField(card, key, value);
-  });
 }
 
 // ============================================================
@@ -890,9 +1219,12 @@ async function verifyMemory() {
 
     resultsEl.replaceChildren();
 
-    const card = createCard("Context Memory Analysis");
-    renderMemoryFields(card, analysis);
-    resultsEl.appendChild(card);
+    const root = el("div", "rr");
+    const card = reportCard("Context memory analysis");
+    renderMemoryAnalysis(card, analysis);
+    renderLimitations(card, collectLimitations(analysis));
+    root.appendChild(card);
+    resultsEl.appendChild(root);
 
     statusEl.textContent = "Context memory analysis completed.";
   } catch (error) {
